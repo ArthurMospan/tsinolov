@@ -71,6 +71,14 @@ const schemaStatements = [
         last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (tg_id, product_id),
         FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_promo_state (
+        tg_id INTEGER NOT NULL,
+        promo_id TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (tg_id, promo_id),
+        FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
     )`
 ];
 

@@ -41,6 +41,12 @@ function telegramContext(): { id: number; initData: string } {
   return { id: getTgId(), initData: telegramInitData() };
 }
 
+function telegramUser(): { name: string; avatar: string } {
+  const user = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
+  const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim();
+  return { name, avatar: String(user?.photo_url || '') };
+}
+
 function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   const initData = telegramInitData();
@@ -103,11 +109,11 @@ const SETTING_DEFINITIONS: Array<{
   { key: 'price_target', icon: '🎯', title: 'Бажана ціна', description: 'Коли товар коштує не дорожче за бажану ціну' },
   { key: 'price_drop', icon: '📉', title: 'Зниження ціни', description: 'Коли ціна товару стала нижчою' },
   { key: 'promo_new', icon: '🔥', title: 'Нові акції', description: 'Коли на товар зʼявилася акція' },
-  { key: 'promo_personal', icon: '⭐', title: 'Персональні пропозиції', description: 'Вигідні пропозиції саме для вас' },
+  { key: 'promo_personal', icon: '⭐', title: 'Нові персональні пропозиції', description: 'Коли в акаунті Сільпо з’являється нова пропозиція' },
   { key: 'in_stock', icon: '📦', title: 'Повернення в наявність', description: 'Коли недоступний товар знову можна купити' },
   { key: 'delivery_available', icon: '🚚', title: 'Доступність доставки', description: 'Коли товар знову доступний для доставки' },
-  { key: 'alt_cheaper', icon: '💡', title: 'Дешевші альтернативи', description: 'Коли є вигідніший схожий товар' },
-  { key: 'smart_buy', icon: '🧠', title: 'Smart Buy', description: 'Коли ціна виглядає особливо вигідною' },
+  { key: 'alt_cheaper', icon: '💡', title: 'Точні дешевші варіанти', description: 'Лише той самий бренд, тип і сумісна фасовка' },
+  { key: 'smart_buy', icon: '🧠', title: 'Велика знижка', description: 'Коли ціна щонайменше на 20% нижча за звичайну' },
 ];
 
 function numberValue(value: unknown, fallback = 0): number {
@@ -165,6 +171,17 @@ function productUrl(product: Product): string | undefined {
   return product.slug ? `https://silpo.ua/product/${product.slug}` : undefined;
 }
 
+function deliveryLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.includes('pickup') || normalized.includes('самовив')) return 'Самовивіз';
+  if (normalized.includes('delivery') || normalized.includes('достав')) return 'Доставка';
+  return value || 'Сільпо';
+}
+
+function shortName(value: string): string {
+  return value.trim().split(/\s+/)[0] || 'Акаунт';
+}
+
 function App() {
   const [tgId, setTgId] = useState<number>(() => getTgId());
   const [activeTab, setActiveTab] = useState<'favorites' | 'settings'>('favorites');
@@ -192,6 +209,7 @@ function App() {
     }
 
     setIsLoading(true);
+    let authenticatedSession = false;
     try {
       const statusResponse = await apiFetch(`${API_URL}/api/auth/status?tg_id=${tgId}`);
       if (statusResponse.status === 401) {
@@ -199,7 +217,8 @@ function App() {
       }
       if (!statusResponse.ok) throw new Error('Auth status unavailable');
       const status = await statusResponse.json();
-      setIsAuthenticated(Boolean(status.authenticated));
+      authenticatedSession = Boolean(status.authenticated);
+      setIsAuthenticated(authenticatedSession);
 
       if (!status.authenticated) {
         setFavorites([]);
@@ -214,20 +233,26 @@ function App() {
       if (!profileResponse.ok || !settingsResponse.ok) throw new Error('User data unavailable');
 
       const profile = await profileResponse.json();
+      const telegram = telegramUser();
+      const normalizedProfile: UserProfile = {
+        ...profile,
+        name: String(profile.name || telegram.name || 'Мій акаунт'),
+        avatar: String(profile.avatar || telegram.avatar || ''),
+      };
       const savedSettings = await settingsResponse.json();
-      setUserProfile(profile);
+      setUserProfile(normalizedProfile);
       setSettings({ ...DEFAULT_SETTINGS, ...savedSettings });
 
       const favoritesResponse = await apiFetch(
-        `${API_URL}/api/favorites?tg_id=${tgId}&branchId=${encodeURIComponent(profile.branchId || '')}&deliveryType=${encodeURIComponent(profile.deliveryType || '')}`
+        `${API_URL}/api/favorites?tg_id=${tgId}&branchId=${encodeURIComponent(normalizedProfile.branchId || '')}&deliveryType=${encodeURIComponent(normalizedProfile.deliveryType || '')}`
       );
       if (!favoritesResponse.ok) throw new Error('Favorites unavailable');
       const favoritesData = await favoritesResponse.json();
       setFavorites(Array.isArray(favoritesData.favorites) ? favoritesData.favorites.map(normalizeProduct) : []);
     } catch (error) {
       console.error('[Mini App] Failed to load data:', error);
-      setIsAuthenticated(false);
-      setFavorites([]);
+      setIsAuthenticated(authenticatedSession);
+      if (!authenticatedSession) setFavorites([]);
       const message = error instanceof Error ? error.message : '';
       if (message === 'Telegram context missing') {
         showToast('Відкрийте застосунок через Telegram');
@@ -445,9 +470,14 @@ function App() {
         </div>
         {isAuthenticated && userProfile ? (
           <div className="header-actions">
+            <div className="profile-avatar" role="img" aria-label={`Акаунт ${userProfile.name}`}>
+              {userProfile.avatar
+                ? <img src={userProfile.avatar} alt="" />
+                : <span>{userProfile.name.slice(0, 1).toUpperCase()}</span>}
+            </div>
             <div className="store-pill">
-              <span>{userProfile.deliveryType || 'Сільпо'}</span>
-              <strong>{userProfile.name || 'Мій акаунт'}</strong>
+              <span>{deliveryLabel(userProfile.deliveryType)}</span>
+              <strong>{shortName(userProfile.name)}</strong>
             </div>
             <button className="icon-button header-icon" onClick={logout} aria-label="Вийти з акаунта" title="Вийти">
               <LogOut size={18} />
@@ -563,7 +593,7 @@ function App() {
 function ProductImage({ product }: { product: Product }) {
   const [failed, setFailed] = useState(false);
   if (!product.image_url || failed) return <div className="product-image-fallback">{product.name.slice(0, 1).toUpperCase()}</div>;
-  return <img className="product-image" src={product.image_url} alt="" onError={() => setFailed(true)} />;
+  return <img className="product-image" src={product.image_url} alt={product.name} onError={() => setFailed(true)} />;
 }
 
 export default App;

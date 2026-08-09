@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import path from 'path';
 import db from '../db/index';
 import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
+import { profileIdentityFromMcp } from '../api/mcp-profile';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -154,19 +155,13 @@ app.get('/api/user/profile', async (req, res) => {
 
     try {
         // 1. Fetch Profile
-        const profileResp = await callMCPTool(token, 'silpo_get_my_profile', {});
-        let name = 'Гість';
+        let name = '';
         let avatar = '';
-        if (profileResp?.result?.content) {
-            for (const item of profileResp.result.content) {
-                if (item.type === 'text') {
-                    try {
-                        const parsed = JSON.parse(item.text);
-                        if (parsed.firstName) name = parsed.firstName;
-                        if (parsed.avatar || parsed.picture) avatar = parsed.avatar || parsed.picture;
-                    } catch {}
-                }
-            }
+        try {
+            const profileResp = await callMCPTool(token, 'silpo_get_my_profile', {});
+            ({ name, avatar } = profileIdentityFromMcp(profileResp));
+        } catch (error) {
+            console.warn('[MCP] Profile identity unavailable, using Telegram fallback:', error);
         }
 
         // 2. Fetch Cart ID to get Store / Delivery Type
@@ -211,8 +206,8 @@ app.get('/api/user/profile', async (req, res) => {
 
         res.json({ authenticated: true, name, avatar, branchId, deliveryType });
     } catch (err) {
-        console.error('[MCP] Profile fetch failed:', err);
-        res.json({ authenticated: true, name: 'Помилка', avatar: '', branchId: '', deliveryType: '' });
+        console.error('[MCP] Store context fetch failed:', err);
+        res.status(502).json({ error: 'Silpo store context is temporarily unavailable' });
     }
 });
 
@@ -280,7 +275,7 @@ app.get('/api/favorites', async (req, res) => {
         res.json({ authenticated: true, favorites });
     } catch (err) {
         console.error('[MCP] Favorites fetch failed:', err);
-        res.json({ authenticated: true, favorites: [], error: 'MCP call failed' });
+        res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });
     }
 });
 
@@ -360,9 +355,13 @@ app.post('/api/favorites/target', async (req, res) => {
         }
 
         const result = await runUserCheck(Number(tg_id), sendTelegramMessage);
+        const savedTarget = await db.prepare(
+            'SELECT target_price FROM user_favorites WHERE tg_id = ? AND product_id = ?'
+        ).get(tg_id, String(product_id)) as any;
+        const targetWasReached = Number(savedTarget?.target_price || 0) === 0;
         res.json({
             success: true,
-            notificationSent: result.notifications > 0,
+            notificationSent: targetWasReached,
             checkError: result.error || undefined
         });
     } catch (error) {

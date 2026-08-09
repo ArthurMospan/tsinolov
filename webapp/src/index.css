@@ -28,10 +28,12 @@ a { color: inherit; }
 .brand-lockup { gap: 10px; min-width: 0; }
 .brand-mark { display: grid; width: 40px; height: 40px; place-items: center; flex: 0 0 40px; overflow: hidden; border-radius: 13px; background: rgba(255,255,255,.2); }
 .brand-logo { display: block; width: 36px; height: 36px; border-radius: 10px; object-fit: cover; }
-.eyebrow, .section-kicker { margin: 0; color: #a3a3a3; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+.eyebrow, .section-kicker { margin: 0; color: #666660; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
 .app-header .eyebrow { color: rgba(255,255,255,.76); }
 .app-header h1 { margin: 1px 0 0; font-size: 22px; line-height: 1; letter-spacing: -.04em; }
 .header-actions { gap: 8px; }
+.profile-avatar { display: grid; width: 36px; height: 36px; place-items: center; flex: 0 0 36px; overflow: hidden; border: 1px solid rgba(255,255,255,.32); border-radius: 50%; color: var(--orange-dark); background: #fff7ed; font-size: 14px; font-weight: 900; box-shadow: 0 3px 10px rgba(109,45,8,.16); }
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .store-pill { display: flex; flex-direction: column; align-items: flex-end; max-width: 132px; }
 .store-pill span { max-width: 132px; overflow: hidden; color: rgba(255,255,255,.76); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .store-pill strong { max-width: 132px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -64,13 +66,13 @@ a { color: inherit; }
 .availability.available { color: var(--green); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .product-name { display: -webkit-box; overflow: hidden; margin: 3px 0 0; color: var(--ink); font-size: 16px; font-weight: 750; line-height: 1.2; letter-spacing: -.025em; text-decoration: none; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.product-meta { margin: 5px 0 8px; color: #999991; font-size: 12px; }
+.product-meta { margin: 5px 0 8px; color: #60605b; font-size: 12px; }
 .price-line { flex-wrap: wrap; gap: 7px; }
 .price-line strong { color: var(--ink); font-size: 20px; letter-spacing: -.035em; }
-.price-line del { color: #a3a3a0; font-size: 12px; }
+.price-line del { color: #686864; font-size: 12px; }
 .discount-badge { padding: 4px 6px; border-radius: 7px; color: #c4432b; background: #fff0ec; font-size: 10px; font-weight: 900; }
-.target-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: fit-content; max-width: 100%; margin-top: 9px; padding: 7px 9px; overflow: hidden; border: 1px solid #fbd2b5; border-radius: 9px; color: var(--orange-dark); background: #fffaf7; font-size: 11px; font-weight: 800; text-align: center; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.target-button.target-set { border-color: #b9e3cd; color: var(--green); background: var(--green-soft); }
+.target-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: fit-content; max-width: 100%; margin-top: 9px; padding: 7px 9px; overflow: hidden; border: 1px solid #fbd2b5; border-radius: 9px; color: #9a3b00; background: #fffaf7; font-size: 11px; font-weight: 800; text-align: center; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.target-button.target-set { border-color: #b9e3cd; color: #0b6844; background: var(--green-soft); }
 .product-footer { min-height: 36px; margin-top: auto; padding-top: 10px; }
 .cart-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 104px; min-height: 36px; padding: 0 13px; border: 0; border-radius: 11px; color: white; background: #1a65c7; font-size: 12px; font-weight: 800; cursor: pointer; }
 .cart-button:disabled, .primary-button:disabled { cursor: wait; opacity: .65; }
@@ -97,8 +99,8 @@ a { color: inherit; }
 .info-card svg { flex: 0 0 auto; color: var(--green); }
 .info-card p { margin: 0; }
 .bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; display: flex; justify-content: center; gap: 6px; padding: 9px 16px max(11px, env(safe-area-inset-bottom)); border-top: 1px solid rgba(0,0,0,.06); background: rgba(255,255,255,.94); box-shadow: 0 -8px 24px rgba(25,25,20,.06); backdrop-filter: blur(16px); }
-.nav-button { display: flex; width: min(180px, 50%); align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 0; border-radius: 13px; color: #a0a09a; background: transparent; font-size: 11px; font-weight: 800; cursor: pointer; }
-.nav-button.active { color: var(--orange-dark); background: var(--orange-soft); }
+.nav-button { display: flex; width: min(180px, 50%); align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 0; border-radius: 13px; color: #666660; background: transparent; font-size: 11px; font-weight: 800; cursor: pointer; }
+.nav-button.active { color: #9a3b00; background: var(--orange-soft); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; background: rgba(19,19,16,.42); animation: fade-in .18s ease; }
 .target-sheet { width: 100%; max-width: 720px; margin: 0 auto; padding: 10px 20px calc(22px + env(safe-area-inset-bottom)); border-radius: 25px 25px 0 0; background: white; box-shadow: 0 -16px 40px rgba(0,0,0,.16); animation: slide-up .25s cubic-bezier(.2,.8,.2,1); }
 .sheet-handle { width: 42px; height: 4px; margin: 0 auto 22px; border-radius: 99px; background: #deded9; }
@@ -125,4 +127,15 @@ a { color: inherit; }
   .connect-card { width: min(688px, calc(100% - 32px)); margin-right: auto; margin-left: auto; }
   .product-card { padding: 16px; }
   .product-media { width: 132px; height: 172px; flex-basis: 132px; }
+}
+
+@media (max-width: 390px) {
+  .app-header { gap: 8px; padding-right: 12px; padding-left: 12px; }
+  .brand-lockup { gap: 8px; }
+  .brand-mark { width: 36px; height: 36px; flex-basis: 36px; }
+  .brand-logo { width: 32px; height: 32px; }
+  .app-header h1 { font-size: 20px; }
+  .profile-avatar { width: 34px; height: 34px; flex-basis: 34px; }
+  .store-pill { max-width: 86px; }
+  .store-pill span, .store-pill strong { max-width: 86px; }
 }

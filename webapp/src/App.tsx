@@ -100,7 +100,7 @@ const SETTING_DEFINITIONS: Array<{
   title: string;
   description: string;
 }> = [
-  { key: 'price_target', icon: '🎯', title: 'Бажана ціна', description: 'Коли товар коштує не дорожче за вашу стелю' },
+  { key: 'price_target', icon: '🎯', title: 'Бажана ціна', description: 'Коли товар коштує не дорожче за бажану ціну' },
   { key: 'price_drop', icon: '📉', title: 'Зниження ціни', description: 'Коли ціна товару стала нижчою' },
   { key: 'promo_new', icon: '🔥', title: 'Нові акції', description: 'Коли на товар зʼявилася акція' },
   { key: 'promo_personal', icon: '⭐', title: 'Персональні пропозиції', description: 'Вигідні пропозиції саме для вас' },
@@ -334,10 +334,10 @@ function App() {
       setModalProduct(null);
       showToast(result.notificationSent
         ? 'Ціль досягнута — сповіщення вже надіслано'
-        : targetPrice > 0 ? 'Стелю збережено' : 'Стелю скинуто');
+        : targetPrice > 0 ? 'Бажану ціну збережено' : 'Бажану ціну скинуто');
     } catch (error) {
       console.error('[Mini App] Failed to save target:', error);
-      showToast('Не вдалося зберегти стелю');
+      showToast('Не вдалося зберегти бажану ціну');
     } finally {
       setSavingTargetId(null);
     }
@@ -502,7 +502,7 @@ function App() {
                         </div>
                         <button className={`target-button ${product.target_price > 0 ? 'target-set' : ''}`} onClick={() => openTargetModal(product)}>
                           <Sparkles size={15} />
-                          {product.target_price > 0 ? `Стеля ${formatPrice(product.target_price)}` : 'Встановити стелю'}
+                          {product.target_price > 0 ? `Бажана ціна: ${formatPrice(product.target_price)}` : 'Встановити бажану ціну'}
                         </button>
                         <div className="product-footer">
                           {product.available ? (
@@ -532,7 +532,7 @@ function App() {
                 </label>
               ))}
             </div>
-            <div className="info-card"><Check size={18} /><p>Зміни зберігаються одразу. Перевірка цін відбувається автоматично, а при збереженні стелі поточна ціна перевіряється без очікування наступного циклу.</p></div>
+            <div className="info-card"><Check size={18} /><p>Зміни зберігаються одразу. Перевірка цін відбувається автоматично, а при збереженні бажаної ціни поточна ціна перевіряється без очікування наступного циклу.</p></div>
           </section>
         )}
       </main>
@@ -551,8 +551,8 @@ function App() {
             <label className="input-label" htmlFor="target-price">Нагадати, коли ціна буде</label>
             <div className="price-input-wrap"><input id="target-price" type="number" min="0" step="0.01" inputMode="decimal" autoFocus value={targetDraft} onChange={event => setTargetDraft(event.target.value)} placeholder="0" /><span>₴</span></div>
             <p className="sheet-hint">{targetHint}</p>
-            <button className="primary-button" disabled={savingTargetId === modalProduct.product_id} onClick={() => void saveTargetPrice(modalProduct, targetDraft)}>{savingTargetId === modalProduct.product_id ? <span className="button-spinner light" /> : 'Зберегти стелю'}</button>
-            {modalProduct.target_price > 0 && <button className="remove-target-button" onClick={() => void saveTargetPrice(modalProduct, '0')}>Скинути стелю</button>}
+            <button className="primary-button" disabled={savingTargetId === modalProduct.product_id} onClick={() => void saveTargetPrice(modalProduct, targetDraft)}>{savingTargetId === modalProduct.product_id ? <span className="button-spinner light" /> : 'Зберегти бажану ціну'}</button>
+            {modalProduct.target_price > 0 && <button className="remove-target-button" onClick={() => void saveTargetPrice(modalProduct, '0')}>Скинути бажану ціну</button>}
           </section>
         </div>
       )}

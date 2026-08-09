@@ -325,7 +325,7 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             const name = String(firstValue(product, ['name', 'title', 'productName']) || productId);
 
             if (settings.price_target && targetPrice > 0 && currentPrice <= targetPrice) {
-                messages.push(`🎯 Цільова ціна досягнута\n${name}\nЗараз: ${currentPrice} ₴ · ваша стеля: ${targetPrice} ₴`);
+                messages.push(`🎯 Бажана ціна досягнута\n${name}\nЗараз: ${currentPrice} ₴ · ваша бажана ціна: ${targetPrice} ₴`);
             }
             if (settings.price_drop && previous && currentPrice < Number(previous.current_price || 0)) {
                 messages.push(`📉 Ціна знизилась\n${name}\nБуло: ${previous.current_price} ₴ · зараз: ${currentPrice} ₴`);

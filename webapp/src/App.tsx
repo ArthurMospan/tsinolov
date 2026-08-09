@@ -875,14 +875,14 @@ function App() {
       {toast && <div className="toast" role="status">{toast}</div>}
 
       <header className="app-header">
-        <div className="brand-lockup">
+        <button className="brand-lockup brand-home-button" type="button" onClick={openFavorites} aria-label="На головну">
           <div className="brand-mark">
             <img className="brand-logo" src={SILPO_LOGO_URL} alt="Сільпо" />
           </div>
           <div>
             <h1>Цінолов</h1>
           </div>
-        </div>
+        </button>
         {isAuthenticated && userProfile ? (
           <div className="header-actions">
             <button className="header-settings-button" type="button" onClick={openSettings} aria-label="Налаштування сповіщень">

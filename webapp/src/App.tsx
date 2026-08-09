@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Heart, Settings as SettingsIcon, Bell } from 'lucide-react';
+import { Heart, Settings as SettingsIcon } from 'lucide-react';
 import WebApp from '@twa-dev/sdk';
 
 // Get tgId from Telegram WebApp SDK, fallback to 123 for local testing

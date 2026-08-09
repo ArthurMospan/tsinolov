@@ -31,3 +31,10 @@ test('ignores invalid special prices', () => {
     assert.equal(pricing.effectivePrice, 100);
     assert.equal(pricing.hasPromo, false);
 });
+
+test('does not present an unknown conditional offer as an ordinary discount', () => {
+    const pricing = productPricing({ price: 100, specialPrices: [{ price: 70, count: 3, type: 'unknown-mechanic' }] });
+    assert.equal(pricing.effectivePrice, 100);
+    assert.equal(pricing.hasPromo, false);
+    assert.equal(pricing.condition, '');
+});

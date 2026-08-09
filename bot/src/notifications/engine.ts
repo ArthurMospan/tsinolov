@@ -1,6 +1,8 @@
 import db from '../db/index';
 import { callMCPTool } from '../api/mcp-direct';
-import { getStoreContext, sameStoreContext, type StoreContext } from '../api/store-context';
+import { sameStoreContext, type StoreContext } from '../api/store-context';
+import { getUserStoreContext } from '../api/user-store-context';
+import { getMonitoringFavorites, nextDaytimeReference, productAvailability } from '../api/monitoring-favorites';
 import { rankProductAlternatives, type RankedAlternative } from './alternative-ranking';
 import { activePersonalPromos, personalPromoMessage, promoIdOf, promoSignature } from './personal-promos';
 import { meaningfulPriceDrop, nextStableBoolean, shouldRecheckAlternative } from './notification-rules';
@@ -89,21 +91,7 @@ function priceOf(product: any): number {
 }
 
 function currentAvailability(product: any): boolean {
-    if (product?.in_stock !== undefined) return boolValue(product.in_stock);
-    if (product?.inStock !== undefined) return boolValue(product.inStock);
-    if (product?.stock !== undefined) {
-        if (typeof product.stock === 'string') {
-            const normalized = product.stock.trim().toLowerCase();
-            if (['out_of_stock', 'out-of-stock', 'unavailable', 'sold_out', 'sold-out', 'none', 'false', '0'].includes(normalized)) {
-                return false;
-            }
-            if (['in_stock', 'in-stock', 'available', 'true'].includes(normalized)) return true;
-        }
-        const numericStock = Number(product.stock);
-        if (Number.isFinite(numericStock)) return numericStock > 0;
-    }
-    if (product?.available !== undefined) return boolValue(product.available);
-    return true;
+    return productAvailability(product) ?? true;
 }
 
 function promoOf(product: any): boolean {
@@ -123,8 +111,7 @@ function deliveryAvailableOf(product: any): boolean {
 }
 
 function hasDistinctDeliveryAvailability(product: any): boolean {
-    return firstValue(product, ['deliveryAvailable', 'delivery_available', 'isDeliveryAvailable']) !== undefined
-        || (product?.available !== undefined && product?.stock !== undefined);
+    return firstValue(product, ['deliveryAvailable', 'delivery_available', 'isDeliveryAvailable']) !== undefined;
 }
 
 function money(value: number): string {
@@ -160,12 +147,15 @@ async function getDetailedProduct(
     if (cached && cached.expiresAt > Date.now()) return { ...cached.product, ...product };
 
     const now = new Date();
+    const daytime = now.getUTCHours() >= 6 && now.getUTCHours() <= 17
+        ? { start: now, end: new Date(now.getTime() + 2 * 60 * 60 * 1000) }
+        : nextDaytimeReference(now);
     const response = await callMCPTool(token, 'silpo_get_product_details', {
         branchId: context.branchId,
         slug,
         deliveryType: context.deliveryType,
-        timeslotStart: now.toISOString(),
-        timeslotEnd: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString()
+        timeslotStart: daytime.start.toISOString(),
+        timeslotEnd: daytime.end.toISOString()
     });
     const detailed = getProductCandidates(parseMcpContent(response))[0];
     if (!detailed) return null;
@@ -236,17 +226,6 @@ async function getAlternative(
     return rankProductAlternatives(detailedCurrent, detailedCandidates.filter(Boolean))[0] || null;
 }
 
-async function getLiveFavorites(token: string, context: { branchId: string; deliveryType: string }): Promise<any[]> {
-    const now = new Date();
-    const response = await callMCPTool(token, 'silpo_get_my_favorites', {
-        branchId: context.branchId,
-        deliveryType: context.deliveryType,
-        timeslotStart: now.toISOString(),
-        timeslotEnd: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString()
-    });
-    return getFavorites(parseMcpContent(response));
-}
-
 async function getPersonalPromoChanges(token: string, tgId: number): Promise<{
     current: any[];
     newPromos: any[];
@@ -292,10 +271,12 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
     ).all(tgId) as any[];
 
     try {
-        const context = await getStoreContext(user.mcp_token);
-        const liveFavorites = await getLiveFavorites(user.mcp_token, context);
+        const notificationsEnabled = boolValue(settings.onboarding_completed);
+        const context = await getUserStoreContext(tgId, user.mcp_token);
+        const monitoring = await getMonitoringFavorites(user.mcp_token, context);
+        const liveFavorites = monitoring.products;
         let promoChanges: Awaited<ReturnType<typeof getPersonalPromoChanges>> | null = null;
-        if (settings.promo_personal) {
+        if (notificationsEnabled && settings.promo_personal) {
             try { promoChanges = await getPersonalPromoChanges(user.mcp_token, tgId); }
             catch (error) { console.error('[Notifications] Personal promos failed:', error); }
         }
@@ -331,26 +312,43 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             ).get(tgId, productId) as any;
             const contextMatches = Boolean(previous) && sameStoreContext(previous, context);
             const eventPrevious = contextMatches ? previous : null;
+            const availabilityPrevious = eventPrevious && boolValue(eventPrevious.availability_reliable) && monitoring.availabilityReliable
+                ? eventPrevious
+                : null;
 
-            const stockState = eventPrevious
+            const stockState = !monitoring.availabilityReliable && eventPrevious
+                ? {
+                    stable: boolValue(eventPrevious.in_stock),
+                    observed: boolValue(eventPrevious.observed_in_stock ?? eventPrevious.in_stock),
+                    observationCount: Number(eventPrevious.in_stock_observation_count || 0),
+                    changed: false,
+                }
+                : availabilityPrevious
                 ? nextStableBoolean(
-                    boolValue(eventPrevious.in_stock),
-                    boolValue(eventPrevious.observed_in_stock ?? eventPrevious.in_stock),
-                    Number(eventPrevious.in_stock_observation_count || 0),
+                    boolValue(availabilityPrevious.in_stock),
+                    boolValue(availabilityPrevious.observed_in_stock ?? availabilityPrevious.in_stock),
+                    Number(availabilityPrevious.in_stock_observation_count || 0),
                     available
                 )
                 : { stable: available, observed: available, observationCount: 0, changed: false };
-            const deliveryState = eventPrevious
+            const deliveryState = !monitoring.availabilityReliable && eventPrevious
+                ? {
+                    stable: boolValue(eventPrevious.delivery_available),
+                    observed: boolValue(eventPrevious.observed_delivery_available ?? eventPrevious.delivery_available),
+                    observationCount: Number(eventPrevious.delivery_observation_count || 0),
+                    changed: false,
+                }
+                : availabilityPrevious
                 ? nextStableBoolean(
-                    boolValue(eventPrevious.delivery_available),
-                    boolValue(eventPrevious.observed_delivery_available ?? eventPrevious.delivery_available),
-                    Number(eventPrevious.delivery_observation_count || 0),
+                    boolValue(availabilityPrevious.delivery_available),
+                    boolValue(availabilityPrevious.observed_delivery_available ?? availabilityPrevious.delivery_available),
+                    Number(availabilityPrevious.delivery_observation_count || 0),
                     deliveryAvailable
                 )
                 : { stable: deliveryAvailable, observed: deliveryAvailable, observationCount: 0, changed: false };
 
             let alternative: RankedAlternative | null = null;
-            const alternativeChecked = Boolean(settings.alt_cheaper)
+            const alternativeChecked = notificationsEnabled && Boolean(settings.alt_cheaper)
                 && shouldRecheckAlternative(eventPrevious, currentPrice);
             if (alternativeChecked) {
                 try { alternative = await getAlternative(user.mcp_token, context, { ...product, price: currentPrice }); }
@@ -371,7 +369,7 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             const messages: string[] = [];
             let alternativeMessageAdded = false;
             const name = String(firstValue(product, ['name', 'title', 'productName']) || productId);
-            const targetReached = Boolean(settings.price_target && targetPrice > 0 && currentPrice <= targetPrice);
+            const targetReached = Boolean(notificationsEnabled && settings.price_target && targetPrice > 0 && currentPrice <= targetPrice);
             const priceDrop = eventPrevious ? meaningfulPriceDrop(eventPrevious.current_price, currentPrice) : null;
             const promoStarted = Boolean(eventPrevious && !boolValue(eventPrevious.has_promo) && hasPromo);
             const smartBuyStarted = Boolean(eventPrevious && smartBuy && !boolValue(eventPrevious.is_smart_buy));
@@ -379,23 +377,23 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
 
             if (targetReached) {
                 messages.push(`🎯 Бажана ціна досягнута\n${name}\nЗараз: ${money(currentPrice)} ₴${priceCondition} · бажана ціна: ${money(targetPrice)} ₴`);
-            } else if (settings.smart_buy && smartBuyStarted) {
+            } else if (notificationsEnabled && settings.smart_buy && smartBuyStarted) {
                 messages.push(`🧠 Велика знижка\n${name}\nЗараз: ${money(currentPrice)} ₴${priceCondition} · на ${pricing.discountPercent}% нижче звичайної ціни.`);
-            } else if (settings.promo_new && promoStarted) {
+            } else if (notificationsEnabled && settings.promo_new && promoStarted) {
                 messages.push(`🔥 Нова акція\n${name}\nАкційна ціна: ${money(currentPrice)} ₴${priceCondition}${pricing.discountPercent ? ` · знижка ${pricing.discountPercent}%` : ''}`);
-            } else if (settings.price_drop && priceDrop) {
+            } else if (notificationsEnabled && settings.price_drop && priceDrop) {
                 messages.push(`📉 Помітне зниження ціни\n${name}\nБуло: ${money(Number(eventPrevious.current_price))} ₴ · зараз: ${money(currentPrice)} ₴${priceCondition}\nЕкономія: ${money(priceDrop.amount)} ₴ (${Math.round(priceDrop.percent)}%)`);
             }
-            if (settings.in_stock && stockState.changed && stockState.stable) {
+            if (notificationsEnabled && monitoring.availabilityReliable && settings.in_stock && stockState.changed && stockState.stable) {
                 messages.push(`📦 Товар знову в наявності\n${name}`);
-            } else if (settings.delivery_available && hasDistinctDeliveryAvailability(product) && deliveryState.changed && deliveryState.stable) {
+            } else if (notificationsEnabled && monitoring.availabilityReliable && settings.delivery_available && hasDistinctDeliveryAvailability(product) && deliveryState.changed && deliveryState.stable) {
                 messages.push(`🚚 Доставка знову доступна\n${name}`);
             }
             const alternativeIsNew = Boolean(alternative) && (
                 String(eventPrevious?.alternative_product_id || '') !== alternative!.productId ||
                 Number(eventPrevious?.alternative_comparison_price ?? Infinity) > alternative!.comparisonPrice + 0.001
             );
-            if (!targetReached && settings.alt_cheaper && eventPrevious && alternative && alternativeIsNew) {
+            if (!targetReached && notificationsEnabled && settings.alt_cheaper && eventPrevious && alternative && alternativeIsNew) {
                 const comparison = alternative.comparisonLabel
                     ? `\nЦіна за ${alternative.comparisonLabel}: ${money(alternative.comparisonPrice)} ₴ (цей товар: ${money(alternative.currentComparisonPrice)} ₴)`
                     : '';
@@ -421,8 +419,8 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
                     (tg_id, product_id, current_price, in_stock, has_promo, is_personal_promo, delivery_available, is_smart_buy,
                      alternative_price, alternative_product_id, alternative_slug, alternative_comparison_price, alternative_checked_at,
                      branch_id, delivery_type, observed_in_stock, in_stock_observation_count,
-                     observed_delivery_available, delivery_observation_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     observed_delivery_available, delivery_observation_count, availability_reliable)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tg_id, product_id) DO UPDATE SET
                     current_price = excluded.current_price,
                     in_stock = excluded.in_stock,
@@ -441,6 +439,7 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
                     in_stock_observation_count = excluded.in_stock_observation_count,
                     observed_delivery_available = excluded.observed_delivery_available,
                     delivery_observation_count = excluded.delivery_observation_count,
+                    availability_reliable = excluded.availability_reliable,
                     last_checked = CURRENT_TIMESTAMP
             `).run(
                 tgId, productId, currentPrice, stockState.stable ? 1 : 0, hasPromo ? 1 : 0,
@@ -450,7 +449,8 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
                 alternativeChecked ? new Date().toISOString() : eventPrevious?.alternative_checked_at || null,
                 context.branchId, context.deliveryType,
                 stockState.observed ? 1 : 0, stockState.observationCount,
-                deliveryState.observed ? 1 : 0, deliveryState.observationCount
+                deliveryState.observed ? 1 : 0, deliveryState.observationCount,
+                monitoring.availabilityReliable ? 1 : 0
             );
         }
 

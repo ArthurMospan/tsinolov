@@ -5,7 +5,9 @@ import path from 'path';
 import db from '../db/index';
 import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
 import { profileIdentityFromMcp } from '../api/mcp-profile';
-import { getStoreContext } from '../api/store-context';
+import { getStoreContext, listBranches, parseMcpContent, publicStoreLabel } from '../api/store-context';
+import { getUserStoreContext } from '../api/user-store-context';
+import { getMonitoringFavorites } from '../api/monitoring-favorites';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -27,6 +29,26 @@ let oauthState: {
 
 // Store tokens per tg_id
 const userTokens: Map<number, string> = new Map();
+
+async function tokenForUser(tgId: number): Promise<string | null> {
+    const cached = userTokens.get(tgId);
+    if (cached) return cached;
+    const user = await db.prepare('SELECT mcp_token FROM users WHERE tg_id = ?').get(tgId) as any;
+    const token = user?.mcp_token ? String(user.mcp_token) : '';
+    if (token) userTokens.set(tgId, token);
+    return token || null;
+}
+
+function firstMcpRoot(response: any): any {
+    return parseMcpContent(response)[0] || {};
+}
+
+function deliveryTypeOrDefault(value: unknown): string {
+    const normalized = String(value || '');
+    return normalized.startsWith('Delivery') || ['SelfPickup', 'JustIn', 'LongDelivery'].includes(normalized)
+        ? normalized
+        : 'DeliveryHome';
+}
 
 // ── Helper: PKCE ────────────────────────────────────────────────────
 function generateCodeVerifier(): string {
@@ -167,7 +189,7 @@ app.get('/api/user/profile', async (req, res) => {
         }
 
         // 2. Resolve the active cart's public store. Never expose the user's delivery address.
-        const store = await getStoreContext(token);
+        const store = await getUserStoreContext(tgId, token);
         res.json({ authenticated: true, name, avatar, ...store, checkedAt: new Date().toISOString() });
     } catch (err) {
         console.error('[MCP] Store context fetch failed:', err);
@@ -196,29 +218,9 @@ app.get('/api/favorites', async (req, res) => {
     }
 
     try {
-        const payload = {
-            branchId: req.query.branchId || '00000000-0000-0000-0000-000000000000',
-            deliveryType: req.query.deliveryType || 'Unknown',
-            timeslotStart: new Date().toISOString(),
-            timeslotEnd: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
-        };
-        // Call MCP to get real favorites
-        const result = await callMCPTool(token, 'silpo_get_my_favorites', payload);
-        
-        // Parse MCP response  
-        let favorites: any[] = [];
-        if (result?.result?.content) {
-            for (const item of result.result.content) {
-                if (item.type === 'text') {
-                    try {
-                        const parsed = JSON.parse(item.text);
-                        favorites = Array.isArray(parsed) ? parsed : parsed.items || parsed.products || [parsed];
-                    } catch {
-                        favorites = [];
-                    }
-                }
-            }
-        }
+        const context = await getUserStoreContext(tgId, token);
+        const monitoring = await getMonitoringFavorites(token, context);
+        let favorites = monitoring.products;
         // Merge with DB targets
         const userFavs = await db.prepare('SELECT product_id, target_price FROM user_favorites WHERE tg_id = ?').all(tgId) as any[];
         const targetMap = new Map();
@@ -233,7 +235,15 @@ app.get('/api/favorites', async (req, res) => {
                 };
             });
         }
-        res.json({ authenticated: true, favorites, checkedAt: new Date().toISOString() });
+        res.json({
+            authenticated: true,
+            favorites,
+            checkedAt: new Date().toISOString(),
+            availabilityReliable: monitoring.availabilityReliable,
+            availabilityBasis: monitoring.availabilityBasis,
+            availabilityCheckedFor: monitoring.checkedFor,
+            store: context,
+        });
     } catch (err) {
         console.error('[MCP] Favorites fetch failed:', err);
         res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });
@@ -262,11 +272,117 @@ app.post('/api/settings', async (req, res) => {
     await db.prepare('INSERT OR IGNORE INTO user_settings (tg_id) VALUES (?)').run(tg_id);
 
     for (const [key, value] of Object.entries(updates)) {
-        if (['price_drop', 'price_target', 'promo_new', 'promo_personal', 'in_stock', 'delivery_available', 'alt_cheaper', 'smart_buy'].includes(key)) {
+        if (['price_drop', 'price_target', 'promo_new', 'promo_personal', 'in_stock', 'delivery_available', 'alt_cheaper', 'smart_buy', 'onboarding_completed'].includes(key)) {
         await db.prepare(`UPDATE user_settings SET ${key} = ? WHERE tg_id = ?`).run(value ? 1 : 0, tg_id);
         }
     }
     res.json({ success: true });
+});
+
+// ── API: Monitoring store selection ─────────────────────────────────
+app.get('/api/stores/options', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    if (!tgId) return res.status(400).json({ error: 'Missing tg_id' });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+        const [current, accountDefault, ordersResponse, addressesResponse] = await Promise.all([
+            getUserStoreContext(tgId, token),
+            getStoreContext(token),
+            callMCPTool(token, 'silpo_get_my_online_orders', { limit: 10, offset: 0 }).catch(() => null),
+            callMCPTool(token, 'silpo_get_my_delivery_addresses', {}).catch(() => null),
+        ]);
+
+        const ordersRoot = ordersResponse ? firstMcpRoot(ordersResponse) : {};
+        const orders = Array.isArray(ordersRoot?.orders) ? ordersRoot.orders : [];
+        const recentSeeds = new Map<string, { branchId: string; deliveryType: string }>();
+        for (const order of orders) {
+            const product = Array.isArray(order?.products) ? order.products.find((item: any) => item?.branchId) : null;
+            const branchId = String(product?.branchId || order?.branchId || '');
+            if (!branchId || recentSeeds.has(branchId)) continue;
+            recentSeeds.set(branchId, { branchId, deliveryType: deliveryTypeOrDefault(order?.delivery?.type) });
+            if (recentSeeds.size >= 4) break;
+        }
+        const recent = await Promise.all([...recentSeeds.values()].map(seed => getStoreContext(token, seed)));
+
+        const addressesRoot = addressesResponse ? firstMcpRoot(addressesResponse) : {};
+        const savedAddresses = Array.isArray(addressesRoot)
+            ? addressesRoot
+            : addressesRoot?.items || addressesRoot?.addresses || addressesRoot?.data || [];
+        const addressOptions = (await Promise.all(savedAddresses.slice(0, 6).map(async (address: any) => {
+            const latitude = Number(address?.latitude);
+            const longitude = Number(address?.longitude);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+            const response = await callMCPTool(token, 'silpo_get_available_delivery_types', { latitude, longitude });
+            const root = firstMcpRoot(response);
+            const option = Array.isArray(root?.options)
+                ? root.options.find((item: any) => item?.deliveryType === 'DeliveryHome' && item?.branchId)
+                : null;
+            if (!option?.branchId) return null;
+            const store = await getStoreContext(token, { branchId: String(option.branchId), deliveryType: 'DeliveryHome' });
+            return {
+                ...store,
+                addressLabel: [address?.tag, address?.city, address?.street, address?.building].filter(Boolean).join(' · '),
+            };
+        }))).filter(Boolean);
+
+        res.json({ current, accountDefault, recent, addresses: addressOptions });
+    } catch (error) {
+        console.error('[Stores] Failed to load options:', error);
+        res.status(502).json({ error: 'Failed to load store options' });
+    }
+});
+
+app.get('/api/stores/search', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    const query = String(req.query.q || '').trim().toLocaleLowerCase('uk-UA');
+    if (!tgId || query.length < 2) return res.json({ stores: [] });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const branches = await listBranches(token);
+        const stores = branches
+            .map(branch => ({
+                branchId: String(branch?.branchId || branch?.id || ''),
+                deliveryType: 'SelfPickup',
+                storeLabel: publicStoreLabel(branch),
+                city: String(branch?.city || branch?.locality || ''),
+                address: String(branch?.address || branch?.streetAddress || ''),
+            }))
+            .filter(store => store.branchId && `${store.city} ${store.address} ${store.storeLabel}`.toLocaleLowerCase('uk-UA').includes(query))
+            .slice(0, 20);
+        res.json({ stores });
+    } catch (error) {
+        console.error('[Stores] Search failed:', error);
+        res.status(502).json({ error: 'Store search failed' });
+    }
+});
+
+app.post('/api/stores/select', async (req, res) => {
+    const tgId = Number(req.body.tg_id);
+    const branchId = String(req.body.branchId || '');
+    const deliveryType = deliveryTypeOrDefault(req.body.deliveryType || 'SelfPickup');
+    if (!tgId || !branchId) return res.status(400).json({ error: 'Missing store parameters' });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const accountDefault = await getStoreContext(token);
+        if (accountDefault.branchId === branchId && accountDefault.deliveryType.toLowerCase() === deliveryType.toLowerCase()) {
+            await db.prepare(`
+                UPDATE users SET monitor_branch_id = NULL, monitor_delivery_type = NULL, monitor_store_label = NULL WHERE tg_id = ?
+            `).run(tgId);
+            return res.json({ success: true, store: accountDefault });
+        }
+        const context = await getStoreContext(token, { branchId, deliveryType });
+        await db.prepare(`
+            UPDATE users SET monitor_branch_id = ?, monitor_delivery_type = ?, monitor_store_label = ? WHERE tg_id = ?
+        `).run(context.branchId, context.deliveryType, context.storeLabel, tgId);
+        res.json({ success: true, store: context });
+    } catch (error) {
+        console.error('[Stores] Selection failed:', error);
+        res.status(502).json({ error: 'Store selection failed' });
+    }
 });
 
 app.post('/api/favorites/target', async (req, res) => {
@@ -375,6 +491,39 @@ app.post('/api/cart/add', async (req, res) => {
     } catch (error) {
         console.error('[Cart] Failed to add product:', error);
         res.status(502).json({ error: 'Failed to add product to cart' });
+    }
+});
+
+app.post('/api/cart/add-batch', async (req, res) => {
+    const tgId = Number(req.body.tg_id);
+    const products = Array.isArray(req.body.products) ? req.body.products.slice(0, 20) : [];
+    if (!tgId || !products.length) return res.status(400).json({ error: 'Missing products' });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const context = await getUserStoreContext(tgId, token);
+        if (!context.orderMinimum) {
+            return res.status(409).json({ error: 'Batch cart is available only for the active Silpo delivery context' });
+        }
+        const cartRoot = firstMcpRoot(await callMCPTool(token, 'silpo_get_my_shopping_cart', {}));
+        const shoppingCartId = cartRoot?.shoppingCartId || cartRoot?.cartId || cartRoot?.id;
+        if (!shoppingCartId) throw new Error('MCP did not return shopping cart id');
+        const normalized = products.map((product: any) => ({
+            productId: String(product?.product_id || ''),
+            companyId: String(product?.companyId || ''),
+            branchId: context.branchId,
+            quantity: Number(product?.quantity) > 0 ? Number(product.quantity) : 1,
+            addQuantity: true,
+        })).filter((product: any) => product.productId && product.companyId);
+        if (!normalized.length) return res.status(400).json({ error: 'No valid products' });
+        await callMCPTool(token, 'silpo_add_or_update_cart_products', {
+            shoppingCartId: String(shoppingCartId),
+            products: normalized,
+        });
+        res.json({ success: true, added: normalized.length });
+    } catch (error) {
+        console.error('[Cart] Failed to add deal basket:', error);
+        res.status(502).json({ error: 'Failed to add deal basket' });
     }
 });
 

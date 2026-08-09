@@ -18,8 +18,8 @@ export function productPricing(product: any): ProductPricing {
     const oldPrice = numeric(product?.oldPrice ?? product?.old_price ?? product?.originalPrice);
     const offers = Array.isArray(product?.specialPrices)
         ? product.specialPrices
-            .map((offer: any) => ({ price: numeric(offer?.price), count: numeric(offer?.count) }))
-            .filter((offer: any) => offer.price > 0 && offer.price < basePrice)
+            .map((offer: any) => ({ price: numeric(offer?.price), count: numeric(offer?.count), type: String(offer?.type || '') }))
+            .filter((offer: any) => offer.price > 0 && offer.price < basePrice && (offer.count <= 1 || offer.type === 'from'))
             .sort((left: any, right: any) => left.price - right.price)
         : [];
     const bestOffer = offers[0];
@@ -42,7 +42,7 @@ export function productPricing(product: any): ProductPricing {
         referencePrice,
         specialPrice,
         specialCount,
-        condition: specialCount && specialCount > 1 ? `від ${specialCount} шт` : '',
+        condition: specialCount && specialCount > 1 && bestOffer?.type === 'from' ? `від ${specialCount} шт` : '',
         hasPromo,
         discountPercent,
     };

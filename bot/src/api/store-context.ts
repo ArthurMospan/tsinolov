@@ -7,11 +7,20 @@ export interface StoreContext {
     address: string;
     storeLabel: string;
     isOpen: boolean | null;
+    orderMinimum: number | null;
+    deliveryPrice: number | null;
+    deliveryTemporarilyUnavailable: boolean | null;
 }
 type CachedBranch = { expiresAt: number; branch: any | null };
+export interface StorePreference {
+    branchId: string;
+    deliveryType: string;
+    storeLabel?: string;
+}
 
 const branchCache = new Map<string, CachedBranch>();
 const BRANCH_CACHE_TTL = 6 * 60 * 60 * 1000;
+let branchCatalogCache: { expiresAt: number; branches: any[] } | null = null;
 
 export function parseMcpContent(response: any): any[] {
     const content = response?.result?.content;
@@ -64,7 +73,37 @@ async function resolveBranch(token: string, branchId: string): Promise<any | nul
     return match;
 }
 
-export async function getStoreContext(token: string): Promise<StoreContext> {
+export async function listBranches(token: string): Promise<any[]> {
+    if (branchCatalogCache && branchCatalogCache.expiresAt > Date.now()) return branchCatalogCache.branches;
+    const branches: any[] = [];
+    for (let offset = 0; offset < 1000; offset += 50) {
+        const response = await callMCPTool(token, 'silpo_list_branches', { limit: 50, offset });
+        const page = branchItems(firstObject(parseMcpContent(response)));
+        branches.push(...page);
+        if (page.length < 50) break;
+    }
+    branchCatalogCache = { expiresAt: Date.now() + BRANCH_CACHE_TTL, branches };
+    return branches;
+}
+
+export async function getStoreContext(token: string, preference?: StorePreference): Promise<StoreContext> {
+    if (preference?.branchId) {
+        const branch = await resolveBranch(token, preference.branchId);
+        return {
+            branchId: preference.branchId,
+            deliveryType: preference.deliveryType || 'SelfPickup',
+            city: String(branch?.city || branch?.locality || '').trim(),
+            address: String(branch?.address || branch?.streetAddress || '').trim(),
+            storeLabel: publicStoreLabel(branch) !== 'Магазин Сільпо за замовчуванням'
+                ? publicStoreLabel(branch)
+                : preference.storeLabel || 'Вибраний магазин Сільпо',
+            isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
+            orderMinimum: null,
+            deliveryPrice: null,
+            deliveryTemporarilyUnavailable: null,
+        };
+    }
+
     const cartResponse = await callMCPTool(token, 'silpo_get_my_shopping_cart', {});
     const cartRoot = firstObject(parseMcpContent(cartResponse));
     const cartId = cartRoot?.shoppingCartId || cartRoot?.cartId || cartRoot?.id;
@@ -88,6 +127,12 @@ export async function getStoreContext(token: string): Promise<StoreContext> {
         console.warn(`[MCP] Public branch details unavailable for ${branchId}:`, error);
     }
 
+    const calculation = cart?.calculation || details?.calculation || {};
+    const validations = Array.isArray(calculation?.validations) ? calculation.validations : [];
+    const minimumValidation = validations.find((validation: any) => Number(validation?.context?.orderCostMin) > 0);
+    const delivery = calculation?.delivery || {};
+    const express = delivery?.deliveryExpressByPromise || {};
+
     return {
         branchId,
         deliveryType,
@@ -95,5 +140,10 @@ export async function getStoreContext(token: string): Promise<StoreContext> {
         address: String(branch?.address || branch?.streetAddress || '').trim(),
         storeLabel: publicStoreLabel(branch),
         isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
+        orderMinimum: Number(minimumValidation?.context?.orderCostMin) || null,
+        deliveryPrice: Number(delivery?.total) || Number(express?.price) || null,
+        deliveryTemporarilyUnavailable: typeof express?.isTemporarilyUnavailable === 'boolean'
+            ? express.isTemporarilyUnavailable
+            : null,
     };
 }

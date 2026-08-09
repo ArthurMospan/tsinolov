@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/bot/index.ts",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test src/notifications/alternative-ranking.test.ts src/notifications/personal-promos.test.ts src/notifications/notification-rules.test.ts src/notifications/product-pricing.test.ts src/api/mcp-profile.test.ts src/api/store-context.test.ts",
+    "test": "tsx --test src/notifications/alternative-ranking.test.ts src/notifications/personal-promos.test.ts src/notifications/notification-rules.test.ts src/notifications/product-pricing.test.ts src/api/mcp-profile.test.ts src/api/store-context.test.ts src/api/monitoring-favorites.test.ts",
     "start": "node dist/bot/index.js",
     "db:init": "tsx src/db/init.ts",
     "worker": "tsx src/worker/scanner.ts",

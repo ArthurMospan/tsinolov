@@ -10,19 +10,23 @@ CREATE TABLE IF NOT EXISTS users (
     refresh_token TEXT,
     mcp_token TEXT,
     notification_frequency TEXT DEFAULT 'all', -- 'important', 'all', 'daily_digest'
+    monitor_branch_id TEXT,
+    monitor_delivery_type TEXT,
+    monitor_store_label TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS user_settings (
     tg_id INTEGER PRIMARY KEY,
-    price_drop BOOLEAN DEFAULT 1,
-    price_target BOOLEAN DEFAULT 1,
-    promo_new BOOLEAN DEFAULT 1,
-    promo_personal BOOLEAN DEFAULT 1,
-    in_stock BOOLEAN DEFAULT 1,
-    delivery_available BOOLEAN DEFAULT 1,
-    alt_cheaper BOOLEAN DEFAULT 1,
-    smart_buy BOOLEAN DEFAULT 1,
+    price_drop BOOLEAN DEFAULT 0,
+    price_target BOOLEAN DEFAULT 0,
+    promo_new BOOLEAN DEFAULT 0,
+    promo_personal BOOLEAN DEFAULT 0,
+    in_stock BOOLEAN DEFAULT 0,
+    delivery_available BOOLEAN DEFAULT 0,
+    alt_cheaper BOOLEAN DEFAULT 0,
+    smart_buy BOOLEAN DEFAULT 0,
+    onboarding_completed BOOLEAN DEFAULT 0,
     FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
 );
 
@@ -68,6 +72,7 @@ CREATE TABLE IF NOT EXISTS user_product_state (
     in_stock_observation_count INTEGER DEFAULT 0,
     observed_delivery_available INTEGER,
     delivery_observation_count INTEGER DEFAULT 0,
+    availability_reliable INTEGER DEFAULT 1,
     last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (tg_id, product_id),
     FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE

@@ -384,6 +384,19 @@ function App() {
 
   useEffect(() => {
     const telegram = (window as any).Telegram?.WebApp;
+    const root = document.documentElement;
+    const syncTelegramInsets = () => {
+      const safeTop = Number(telegram?.safeAreaInset?.top || 0);
+      const contentTop = Number(telegram?.contentSafeAreaInset?.top || 0);
+      const safeBottom = Number(telegram?.safeAreaInset?.bottom || 0);
+      const contentBottom = Number(telegram?.contentSafeAreaInset?.bottom || 0);
+      // iOS fullscreen places Telegram's Close / More controls over the page.
+      // Some clients report zero insets briefly, so reserve that space until
+      // Telegram supplies the final content-safe values.
+      const top = Math.max(safeTop, contentTop, telegram?.isFullscreen ? 112 : 0);
+      root.style.setProperty('--tg-runtime-content-safe-top', `${top}px`);
+      root.style.setProperty('--tg-runtime-content-safe-bottom', `${Math.max(safeBottom, contentBottom)}px`);
+    };
     try {
       telegram?.ready();
       telegram?.expand();
@@ -395,6 +408,10 @@ function App() {
     } catch {
       // The app can still render in a regular browser for development.
     }
+    syncTelegramInsets();
+    const events = ['safeAreaChanged', 'contentSafeAreaChanged', 'fullscreenChanged'];
+    events.forEach(event => telegram?.onEvent?.(event, syncTelegramInsets));
+    const insetTimers = [120, 500, 1200].map(delay => window.setTimeout(syncTelegramInsets, delay));
     let cancelled = false;
     const initialize = async () => {
       // Telegram can expose the WebApp context a few frames after the bundle.
@@ -412,6 +429,10 @@ function App() {
     void initialize();
     return () => {
       cancelled = true;
+      insetTimers.forEach(timer => window.clearTimeout(timer));
+      events.forEach(event => telegram?.offEvent?.(event, syncTelegramInsets));
+      root.style.removeProperty('--tg-runtime-content-safe-top');
+      root.style.removeProperty('--tg-runtime-content-safe-bottom');
     };
   }, [loadData, tgId]);
 
@@ -859,15 +880,11 @@ function App() {
             <img className="brand-logo" src={SILPO_LOGO_URL} alt="Сільпо" />
           </div>
           <div>
-            <p className="eyebrow">СІЛЬПО</p>
             <h1>Цінолов</h1>
           </div>
         </div>
         {isAuthenticated && userProfile ? (
           <div className="header-actions">
-            <button className="header-settings-button" type="button" onClick={openSettings} aria-label="Налаштування сповіщень">
-              <SettingsIcon size={19} />
-            </button>
             <div className="profile-menu-wrap">
               <button
                 className="profile-trigger"
@@ -888,6 +905,7 @@ function App() {
                 <>
                   <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
                   <div className="profile-menu" role="menu">
+                    <button type="button" role="menuitem" onClick={openSettings}><SettingsIcon size={18} /><span>Сповіщення</span></button>
                     <button type="button" role="menuitem" onClick={openFavorites}><Heart size={18} /><span>Улюблені</span></button>
                     <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
                     <span className="profile-menu-divider" />
@@ -930,46 +948,20 @@ function App() {
         {activeTab === 'favorites' ? (
           <section className="page-section">
             <div className="section-heading">
-              <div><p className="section-kicker">МОЇ УЛЮБЛЕНІ</p><h2>Товари під наглядом</h2></div>
+              <div>
+                <p className="section-kicker">МОЇ УЛЮБЛЕНІ</p>
+                <h2>Товари під наглядом</h2>
+                {favorites.length > 0 && <p className="section-subtitle">{favorites.length} товарів · {favorites.filter(item => item.target_price > 0).length} бажаних цін</p>}
+              </div>
               <span className="count-pill">{favorites.length}</span>
             </div>
 
-            {favorites.length > 0 && (
-              <div className="watch-summary">
-                <ShieldCheck size={19} />
-                <div><strong>{settings.onboarding_completed ? 'Розумний контроль активний' : 'Сповіщення ще не налаштовані'}</strong><span>{favorites.length} товарів · {favorites.filter(item => item.has_promo).length} акцій · {favorites.filter(item => item.target_price > 0).length} бажаних цін</span></div>
-              </div>
-            )}
-
             {isAuthenticated && (
               <button className="product-search-launcher" type="button" onClick={openProductSearch}>
-                <span className="product-search-launcher-icon"><Search size={20} /></span>
-                <span>
-                  <strong>Знайти товар у Сільпо</strong>
-                  <small>Додамо одразу сюди й в офіційні Улюблені</small>
-                </span>
-                <Plus size={19} />
+                <Search size={20} />
+                <span>Пошук товарів</span>
+                <span className="product-search-launcher-hint">Назва або артикул</span>
               </button>
-            )}
-
-            <div className="telegram-delivery-card">
-              <span className="telegram-delivery-icon"><Send size={18} /></span>
-              <span><strong>Сповіщення приходять у Telegram</strong><small>Бот напише прямо в чат — застосунок можна не тримати відкритим.</small></span>
-              <button type="button" onClick={openSettings}>Налаштувати</button>
-            </div>
-
-            {dealBasket.ready && (
-              <div className="deal-basket-card">
-                <span className="deal-basket-icon"><ShoppingCart size={21} /></span>
-                <span className="deal-basket-copy">
-                  <small>ВИГІДНА ДОБІРКА ГОТОВА</small>
-                  <strong>{dealBasket.items.length} товарів на {formatPrice(dealBasket.total)}</strong>
-                  <span>Мінімум замовлення {formatPrice(dealBasket.minimum)} виконано. Вартість доставки розрахує Сільпо.</span>
-                </span>
-                <button type="button" disabled={addingDealBasket} onClick={() => void addDealBasket()}>
-                  {addingDealBasket ? <span className="button-spinner" /> : 'Додати'}
-                </button>
-              </div>
             )}
 
             {favorites.length > 0 ? (
@@ -1020,7 +1012,20 @@ function App() {
                 })}
               </div>
             ) : (
-              <div className="empty-card"><div className="empty-icon"><ShoppingCart size={28} /></div><h3>Улюблених поки немає</h3><p>Додавайте товари в Улюблені у застосунку Сільпо — тут вони зʼявляться автоматично.</p></div>
+              <div className="empty-card"><div className="empty-icon"><ShoppingCart size={28} /></div><h3>Улюблених поки немає</h3><p>Знайдіть товар через пошук вище — він додасться одночасно сюди й в Улюблені Сільпо.</p></div>
+            )}
+
+            {dealBasket.ready && (
+              <div className="deal-basket-card compact-deal-basket">
+                <span className="deal-basket-icon"><ShoppingCart size={19} /></span>
+                <span className="deal-basket-copy">
+                  <strong>Добірка до кошика: {dealBasket.items.length} товарів</strong>
+                  <span>{formatPrice(dealBasket.total)} · мінімум замовлення виконано</span>
+                </span>
+                <button type="button" disabled={addingDealBasket} onClick={() => void addDealBasket()}>
+                  {addingDealBasket ? <span className="button-spinner" /> : 'У кошик'}
+                </button>
+              </div>
             )}
           </section>
         ) : (
@@ -1102,7 +1107,7 @@ function App() {
           <section className="product-search-sheet" role="dialog" aria-modal="true" aria-labelledby="product-search-title" onMouseDown={event => event.stopPropagation()}>
             <div className="sheet-handle" />
             <div className="sheet-header">
-              <div><p className="section-kicker">КАТАЛОГ СІЛЬПО</p><h2 id="product-search-title">Додати в Улюблені</h2></div>
+              <div><p className="section-kicker">СІЛЬПО</p><h2 id="product-search-title">Пошук товарів</h2></div>
               <button className="icon-button" type="button" onClick={() => setProductSearchOpen(false)} aria-label="Закрити"><X size={20} /></button>
             </div>
             <p className="product-search-context"><MapPin size={14} /><span>Ціна й наявність для <strong>{userProfile?.storeLabel}</strong></span></p>

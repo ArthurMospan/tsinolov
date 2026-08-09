@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bell,
+  ChevronDown,
   ChevronRight,
   Heart,
   Link2,
@@ -13,11 +14,13 @@ import {
   ShieldCheck,
   Sparkles,
   Tag,
+  UserRound,
   X,
 } from 'lucide-react';
 
 const API_URL = '';
 const SILPO_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
+const SILPO_ACCOUNT_URL = 'https://my.silpo.ua/';
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 
@@ -200,10 +203,6 @@ function deliveryLabel(value: string): string {
   return value || 'Сільпо';
 }
 
-function shortName(value: string): string {
-  return value.trim().split(/\s+/)[0] || 'Акаунт';
-}
-
 function updatedLabel(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return 'Оновлено щойно';
@@ -224,6 +223,7 @@ function App() {
   const [savingTargetId, setSavingTargetId] = useState<string | null>(null);
   const [busyProductId, setBusyProductId] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState('');
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -312,8 +312,11 @@ function App() {
     try {
       telegram?.ready();
       telegram?.expand();
+      telegram?.disableVerticalSwipes?.();
+      telegram?.requestFullscreen?.();
       telegram?.setHeaderColor?.('#f97316');
       telegram?.setBackgroundColor?.('#f7f7f5');
+      telegram?.setBottomBarColor?.('#ffffff');
     } catch {
       // The app can still render in a regular browser for development.
     }
@@ -352,6 +355,7 @@ function App() {
   };
 
   const logout = async () => {
+    setProfileMenuOpen(false);
     try {
       await apiFetch(`${API_URL}/api/auth/logout`, {
         method: 'POST',
@@ -366,6 +370,22 @@ function App() {
     } catch {
       showToast('Не вдалося відʼєднати акаунт');
     }
+  };
+
+  const openSilpoAccount = () => {
+    setProfileMenuOpen(false);
+    const telegram = (window as any).Telegram?.WebApp;
+    if (telegram?.openLink) {
+      telegram.openLink(SILPO_ACCOUNT_URL);
+      return;
+    }
+    window.open(SILPO_ACCOUNT_URL, '_blank', 'noopener,noreferrer');
+  };
+
+  const openFavorites = () => {
+    setActiveTab('favorites');
+    setProfileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const saveTargetPrice = async (product: Product, rawValue: string) => {
@@ -472,7 +492,7 @@ function App() {
         body: JSON.stringify({ tg_id: tgId, product_id: product.product_id, slug: product.slug }),
       });
       if (!response.ok) throw new Error('Favorite removal failed');
-      showToast('Товар прибрано з Обраного');
+      showToast('Товар прибрано з Улюблених');
     } catch (error) {
       console.error('[Mini App] Failed to remove favorite:', error);
       setFavorites(previous);
@@ -499,7 +519,7 @@ function App() {
   };
 
   if (isLoading) {
-    return <div className="loading-screen"><div className="loading-spinner" /><p>Завантажуємо ваше Обране…</p></div>;
+    return <div className="loading-screen"><div className="loading-spinner" /><p>Завантажуємо улюблені товари…</p></div>;
   }
 
   return (
@@ -518,18 +538,34 @@ function App() {
         </div>
         {isAuthenticated && userProfile ? (
           <div className="header-actions">
-            <div className="profile-avatar" role="img" aria-label={`Акаунт ${userProfile.name}`}>
-              {userProfile.avatar
-                ? <img src={userProfile.avatar} alt="" />
-                : <span>{userProfile.name.slice(0, 1).toUpperCase()}</span>}
+            <div className="profile-menu-wrap">
+              <button
+                className="profile-trigger"
+                type="button"
+                aria-label="Відкрити меню профілю"
+                aria-haspopup="menu"
+                aria-expanded={profileMenuOpen}
+                onClick={() => setProfileMenuOpen(open => !open)}
+              >
+                <span className="profile-avatar" aria-hidden="true">
+                  {userProfile.avatar
+                    ? <img src={userProfile.avatar} alt="" />
+                    : <UserRound size={20} />}
+                </span>
+                <ChevronDown className={profileMenuOpen ? 'profile-chevron open' : 'profile-chevron'} size={16} />
+              </button>
+              {profileMenuOpen && (
+                <>
+                  <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
+                  <div className="profile-menu" role="menu">
+                    <button type="button" role="menuitem" onClick={openFavorites}><Heart size={18} /><span>Улюблені</span></button>
+                    <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
+                    <span className="profile-menu-divider" />
+                    <button className="profile-menu-danger" type="button" role="menuitem" onClick={() => void logout()}><LogOut size={18} /><span>Вийти</span></button>
+                  </div>
+                </>
+              )}
             </div>
-            <div className="store-pill">
-              <span>{deliveryLabel(userProfile.deliveryType)}</span>
-              <strong>{shortName(userProfile.name)}</strong>
-            </div>
-            <button className="icon-button header-icon" onClick={logout} aria-label="Вийти з акаунта" title="Вийти">
-              <LogOut size={18} />
-            </button>
           </div>
         ) : <span className="header-status">Mini App</span>}
       </header>
@@ -537,7 +573,7 @@ function App() {
       {!isAuthenticated && (
         <button className="connect-card" onClick={connectSilpo}>
           <span className="connect-icon"><Link2 size={20} /></span>
-          <span className="connect-copy"><strong>{tgId ? 'Підключити акаунт Сільпо' : 'Відкрийте через Telegram'}</strong><small>{tgId ? 'Щоб бачити реальне Обране та ціни' : 'Ідентифікатор Telegram не знайдено'}</small></span>
+          <span className="connect-copy"><strong>{tgId ? 'Підключити акаунт Сільпо' : 'Відкрийте через Telegram'}</strong><small>{tgId ? 'Щоб бачити реальні улюблені товари та ціни' : 'Ідентифікатор Telegram не знайдено'}</small></span>
           <ChevronRight size={20} />
         </button>
       )}
@@ -546,7 +582,7 @@ function App() {
         {activeTab === 'favorites' ? (
           <section className="page-section">
             <div className="section-heading">
-              <div><p className="section-kicker">МОЄ ОБРАНЕ</p><h2>Товари під наглядом</h2></div>
+              <div><p className="section-kicker">МОЇ УЛЮБЛЕНІ</p><h2>Товари під наглядом</h2></div>
               <span className="count-pill">{favorites.length}</span>
             </div>
 
@@ -586,7 +622,7 @@ function App() {
                           <span className={product.available ? 'availability available' : 'availability'}>
                             <span className="status-dot" />{product.available ? 'В цьому магазині' : 'Очікується'}
                           </span>
-                          <button className="icon-button tiny-icon" onClick={() => void removeFromFavorites(product)} disabled={isBusy} aria-label="Видалити з Обраного">
+                          <button className="icon-button tiny-icon" onClick={() => void removeFromFavorites(product)} disabled={isBusy} aria-label="Видалити з Улюблених">
                             <Heart size={18} fill="currentColor" />
                           </button>
                         </div>
@@ -615,7 +651,7 @@ function App() {
                 })}
               </div>
             ) : (
-              <div className="empty-card"><div className="empty-icon"><ShoppingCart size={28} /></div><h3>Обране поки порожнє</h3><p>Додавайте товари в Обране у застосунку Сільпо — тут вони зʼявляться автоматично.</p></div>
+              <div className="empty-card"><div className="empty-icon"><ShoppingCart size={28} /></div><h3>Улюблених поки немає</h3><p>Додавайте товари в Улюблені у застосунку Сільпо — тут вони зʼявляться автоматично.</p></div>
             )}
           </section>
         ) : (
@@ -636,7 +672,7 @@ function App() {
       </main>
 
       <nav className="bottom-nav" aria-label="Основна навігація">
-        <button className={activeTab === 'favorites' ? 'nav-button active' : 'nav-button'} onClick={() => setActiveTab('favorites')}><Heart size={20} fill={activeTab === 'favorites' ? 'currentColor' : 'none'} /><span>Обране</span></button>
+        <button className={activeTab === 'favorites' ? 'nav-button active' : 'nav-button'} onClick={() => setActiveTab('favorites')}><Heart size={20} fill={activeTab === 'favorites' ? 'currentColor' : 'none'} /><span>Улюблені</span></button>
         <button className={activeTab === 'settings' ? 'nav-button active' : 'nav-button'} onClick={() => setActiveTab('settings')}><SettingsIcon size={20} /><span>Налаштування</span></button>
       </nav>
 

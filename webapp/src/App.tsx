@@ -393,7 +393,7 @@ function App() {
       // iOS fullscreen places Telegram's Close / More controls over the page.
       // Some clients report zero insets briefly, so reserve that space until
       // Telegram supplies the final content-safe values.
-      const top = Math.max(safeTop, contentTop, telegram?.isFullscreen ? 112 : 0);
+      const top = Math.max(safeTop, contentTop, telegram?.isFullscreen ? 100 : 0);
       root.style.setProperty('--tg-runtime-content-safe-top', `${top}px`);
       root.style.setProperty('--tg-runtime-content-safe-bottom', `${Math.max(safeBottom, contentBottom)}px`);
     };

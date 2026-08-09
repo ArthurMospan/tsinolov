@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 
+const SESSION_COOKIE = 'tg_session';
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+
 function initDataFromRequest(req: Request): string {
     const header = req.headers['x-telegram-init-data'];
     if (typeof header === 'string' && header.trim()) return header.trim();
@@ -12,6 +15,53 @@ function initDataFromRequest(req: Request): string {
 function telegramBotToken(): string {
     const configured = process.env.BOT_TOKEN?.trim() || '';
     return configured.replace(/^("|')(.*)\1$/, '$2').trim();
+}
+
+function sessionSignature(payload: string): string {
+    return crypto.createHmac('sha256', telegramBotToken()).update(payload).digest('base64url');
+}
+
+function readCookie(req: Request, name: string): string {
+    const cookies = req.headers.cookie?.split(';') || [];
+    const entry = cookies.find((item) => item.trim().startsWith(`${name}=`));
+    if (!entry) return '';
+    try {
+        return decodeURIComponent(entry.trim().slice(name.length + 1));
+    } catch {
+        return '';
+    }
+}
+
+function hasValidSession(req: Request, expectedTgId: number): boolean {
+    if (!telegramBotToken()) return false;
+    const value = readCookie(req, SESSION_COOKIE);
+    const [tgId, expiresAt, signature] = value.split('.');
+    if (!tgId || !expiresAt || !signature || Number(tgId) !== expectedTgId) return false;
+    if (Number(expiresAt) <= Math.floor(Date.now() / 1000)) return false;
+
+    const payload = `${tgId}.${expiresAt}`;
+    const expectedSignature = sessionSignature(payload);
+    if (expectedSignature.length !== signature.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(signature));
+}
+
+function issueSession(res: Response, tgId: number): void {
+    const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+    const payload = `${tgId}.${expiresAt}`;
+    const value = `${payload}.${sessionSignature(payload)}`;
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    res.setHeader(
+        'Set-Cookie',
+        `${SESSION_COOKIE}=${encodeURIComponent(value)}; Max-Age=${SESSION_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secure}`
+    );
+}
+
+export function clearTelegramSession(res: Response): void {
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    res.setHeader(
+        'Set-Cookie',
+        `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${secure}`
+    );
 }
 
 function validateInitData(initData: string, expectedTgId: number): boolean {
@@ -49,7 +99,12 @@ export function requireTelegramWebApp(req: Request, res: Response, next: NextFun
     const initData = initDataFromRequest(req);
     const allowDevelopmentFallback = process.env.NODE_ENV !== 'production';
     if (!initData && allowDevelopmentFallback) return next();
-    if (!validateInitData(initData, expectedTgId)) {
+    if (hasValidSession(req, expectedTgId)) return next();
+    if (validateInitData(initData, expectedTgId)) {
+        issueSession(res, expectedTgId);
+        return next();
+    }
+    {
         let hasHash = false;
         let hasUser = false;
         try {
@@ -69,5 +124,4 @@ export function requireTelegramWebApp(req: Request, res: Response, next: NextFun
         });
         return res.status(401).json({ error: 'Invalid Telegram WebApp identity' });
     }
-    next();
 }

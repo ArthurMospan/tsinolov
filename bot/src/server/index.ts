@@ -6,7 +6,7 @@ import db from '../db/index';
 import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
-import { requireTelegramWebApp } from '../auth/telegram';
+import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
 
 const app = express();
 app.use(cors());
@@ -135,6 +135,7 @@ app.post('/api/auth/logout', async (req, res) => {
     
     userTokens.delete(tgId);
     await db.prepare('UPDATE users SET mcp_token = NULL WHERE tg_id = ?').run(tgId);
+    clearTelegramSession(res);
     res.json({ success: true });
 });
 

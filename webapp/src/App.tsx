@@ -17,11 +17,17 @@ import {
 
 const API_URL = '';
 const SILPO_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
+const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 
 function getTgId(): number {
   try {
     const telegram = (window as any).Telegram?.WebApp;
-    return Number(telegram?.initDataUnsafe?.user?.id || import.meta.env.VITE_TEST_TG_ID || 0);
+    const telegramId = Number(telegram?.initDataUnsafe?.user?.id || 0);
+    if (telegramId) {
+      window.localStorage.setItem(TG_ID_STORAGE_KEY, String(telegramId));
+      return telegramId;
+    }
+    return Number(window.localStorage.getItem(TG_ID_STORAGE_KEY) || import.meta.env.VITE_TEST_TG_ID || 0);
   } catch {
     return Number(import.meta.env.VITE_TEST_TG_ID || 0);
   }
@@ -39,7 +45,7 @@ function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Res
   const headers = new Headers(init.headers);
   const initData = telegramInitData();
   if (initData) headers.set('X-Telegram-Init-Data', initData);
-  return fetch(input, { ...init, headers });
+  return fetch(input, { ...init, headers, credentials: init.credentials || 'same-origin' });
 }
 
 type SettingKey =
@@ -270,7 +276,13 @@ function App() {
       showToast('Відкрийте застосунок через Telegram');
       return;
     }
-    window.location.assign(`${API_URL}/auth/start?tg_id=${tgId}&init_data=${encodeURIComponent(telegramInitData())}`);
+    const initData = telegramInitData();
+    if (!initData) {
+      showToast('Telegram не передав підпис. Закрийте й відкрийте Mini App знову');
+      return;
+    }
+    window.localStorage.setItem(TG_ID_STORAGE_KEY, String(tgId));
+    window.location.assign(`${API_URL}/auth/start?tg_id=${tgId}&init_data=${encodeURIComponent(initData)}`);
   };
 
   const logout = async () => {

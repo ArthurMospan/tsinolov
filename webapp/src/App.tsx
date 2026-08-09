@@ -26,8 +26,6 @@ function getTgId(): number {
   }
 }
 
-const tgId = getTgId();
-
 function telegramInitData(): string {
   return String((window as any).Telegram?.WebApp?.initData || '');
 }
@@ -157,6 +155,7 @@ function productUrl(product: Product): string | undefined {
 }
 
 function App() {
+  const [tgId, setTgId] = useState<number>(() => getTgId());
   const [activeTab, setActiveTab] = useState<'favorites' | 'settings'>('favorites');
   const [favorites, setFavorites] = useState<Product[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -219,7 +218,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, tgId]);
 
   useEffect(() => {
     const telegram = (window as any).Telegram?.WebApp;
@@ -231,7 +230,9 @@ function App() {
     } catch {
       // The app can still render in a regular browser for development.
     }
-    void loadData();
+    const detectedTgId = getTgId();
+    setTgId(detectedTgId);
+    if (detectedTgId === tgId) void loadData();
   }, [loadData]);
 
   const connectSilpo = () => {
@@ -394,7 +395,7 @@ function App() {
         <div className="brand-lockup">
           <div className="brand-mark">🎯</div>
           <div>
-            <p className="eyebrow">SMART SILPO WATCHLIST</p>
+            <p className="eyebrow">СІЛЬПО</p>
             <h1>Цінолов</h1>
           </div>
         </div>

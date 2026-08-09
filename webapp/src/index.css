@@ -68,7 +68,7 @@ a { color: inherit; }
 .price-line strong { color: var(--ink); font-size: 20px; letter-spacing: -.035em; }
 .price-line del { color: #a3a3a0; font-size: 12px; }
 .discount-badge { padding: 4px 6px; border-radius: 7px; color: #c4432b; background: #fff0ec; font-size: 10px; font-weight: 900; }
-.target-button { display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; margin-top: 9px; padding: 7px 9px; overflow: hidden; border: 1px solid #fbd2b5; border-radius: 9px; color: var(--orange-dark); background: #fffaf7; font-size: 11px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.target-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: fit-content; max-width: 100%; margin-top: 9px; padding: 7px 9px; overflow: hidden; border: 1px solid #fbd2b5; border-radius: 9px; color: var(--orange-dark); background: #fffaf7; font-size: 11px; font-weight: 800; text-align: center; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .target-button.target-set { border-color: #b9e3cd; color: var(--green); background: var(--green-soft); }
 .product-footer { min-height: 36px; margin-top: auto; padding-top: 10px; }
 .cart-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 104px; min-height: 36px; padding: 0 13px; border: 0; border-radius: 11px; color: white; background: #1a65c7; font-size: 12px; font-weight: 800; cursor: pointer; }

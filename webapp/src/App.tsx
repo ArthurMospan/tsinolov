@@ -30,6 +30,10 @@ function telegramInitData(): string {
   return String((window as any).Telegram?.WebApp?.initData || '');
 }
 
+function telegramContext(): { id: number; initData: string } {
+  return { id: getTgId(), initData: telegramInitData() };
+}
+
 function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   const initData = telegramInitData();
@@ -183,6 +187,9 @@ function App() {
     setIsLoading(true);
     try {
       const statusResponse = await apiFetch(`${API_URL}/api/auth/status?tg_id=${tgId}`);
+      if (statusResponse.status === 401) {
+        throw new Error(telegramInitData() ? 'Telegram identity rejected' : 'Telegram context missing');
+      }
       if (!statusResponse.ok) throw new Error('Auth status unavailable');
       const status = await statusResponse.json();
       setIsAuthenticated(Boolean(status.authenticated));
@@ -214,7 +221,14 @@ function App() {
       console.error('[Mini App] Failed to load data:', error);
       setIsAuthenticated(false);
       setFavorites([]);
-      showToast('Не вдалося завантажити дані');
+      const message = error instanceof Error ? error.message : '';
+      if (message === 'Telegram context missing') {
+        showToast('Відкрийте застосунок через Telegram');
+      } else if (message === 'Telegram identity rejected') {
+        showToast('Telegram-підпис відхилено. Перезапустіть застосунок через бота');
+      } else {
+        showToast('Не вдалося завантажити дані');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -230,9 +244,24 @@ function App() {
     } catch {
       // The app can still render in a regular browser for development.
     }
-    const detectedTgId = getTgId();
-    setTgId(detectedTgId);
-    if (detectedTgId === tgId) void loadData();
+    let cancelled = false;
+    const initialize = async () => {
+      // Telegram can expose the WebApp context a few frames after the bundle.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const context = telegramContext();
+        if (context.id && context.initData) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+      if (cancelled) return;
+
+      const context = telegramContext();
+      setTgId(context.id);
+      if (context.id === tgId) void loadData();
+    };
+    void initialize();
+    return () => {
+      cancelled = true;
+    };
   }, [loadData]);
 
   const connectSilpo = () => {

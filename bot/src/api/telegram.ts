@@ -1,5 +1,5 @@
 export async function sendTelegramMessage(chatId: number, text: string): Promise<void> {
-    const token = process.env.BOT_TOKEN;
+    const token = process.env.BOT_TOKEN?.trim().replace(/^("|')(.*)\1$/, '$2').trim();
     if (!token) throw new Error('BOT_TOKEN is missing');
 
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

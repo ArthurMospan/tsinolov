@@ -6,7 +6,7 @@ import { runChecker, startChecker } from './checker';
 
 dotenv.config();
 
-const token = process.env.BOT_TOKEN;
+const token = process.env.BOT_TOKEN?.trim().replace(/^("|')(.*)\1$/, '$2').trim();
 if (!token) {
     console.error('❌ BOT_TOKEN is missing in .env');
     process.exit(1);

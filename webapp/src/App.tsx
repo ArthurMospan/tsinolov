@@ -885,6 +885,9 @@ function App() {
         </div>
         {isAuthenticated && userProfile ? (
           <div className="header-actions">
+            <button className="header-settings-button" type="button" onClick={openSettings} aria-label="Налаштування сповіщень">
+              <SettingsIcon size={19} />
+            </button>
             <div className="profile-menu-wrap">
               <button
                 className="profile-trigger"
@@ -905,7 +908,6 @@ function App() {
                 <>
                   <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
                   <div className="profile-menu" role="menu">
-                    <button type="button" role="menuitem" onClick={openSettings}><SettingsIcon size={18} /><span>Сповіщення</span></button>
                     <button type="button" role="menuitem" onClick={openFavorites}><Heart size={18} /><span>Улюблені</span></button>
                     <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
                     <span className="profile-menu-divider" />

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 
 const API_URL = '';
+const SILPO_LOGO_URL = 'https://staticv2.silpo.ua/apps/sf-web-silpo-app/release-2-105-1/images/rizdzvonyky/intro-silpo.svg';
 
 function getTgId(): number {
   try {
@@ -422,7 +423,9 @@ function App() {
 
       <header className="app-header">
         <div className="brand-lockup">
-          <div className="brand-mark">🎯</div>
+          <div className="brand-mark">
+            <img className="brand-logo" src={SILPO_LOGO_URL} alt="Сільпо" />
+          </div>
           <div>
             <p className="eyebrow">СІЛЬПО</p>
             <h1>Цінолов</h1>

@@ -26,7 +26,8 @@ a { color: inherit; }
 .app-header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: max(17px, env(safe-area-inset-top)) 18px 16px; color: white; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%); box-shadow: 0 4px 18px rgba(218, 88, 11, .2); }
 .brand-lockup, .header-actions, .product-topline, .price-line, .product-footer, .section-heading, .sheet-header { display: flex; align-items: center; }
 .brand-lockup { gap: 10px; min-width: 0; }
-.brand-mark { display: grid; width: 40px; height: 40px; place-items: center; flex: 0 0 40px; border-radius: 13px; background: rgba(255,255,255,.2); font-size: 22px; }
+.brand-mark { display: grid; width: 48px; height: 40px; place-items: center; flex: 0 0 48px; overflow: hidden; border-radius: 13px; background: rgba(255,255,255,.2); }
+.brand-logo { display: block; width: 44px; height: 29px; object-fit: contain; }
 .eyebrow, .section-kicker { margin: 0; color: #a3a3a3; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
 .app-header .eyebrow { color: rgba(255,255,255,.76); }
 .app-header h1 { margin: 1px 0 0; font-size: 22px; line-height: 1; letter-spacing: -.04em; }

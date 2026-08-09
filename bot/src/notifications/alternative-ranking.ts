@@ -98,7 +98,7 @@ function packagingOf(product: ProductLike): string {
 
 function alcoholOf(product: ProductLike): number | null {
     const raw = firstValue(product, ['alcohol', 'alcoholPercent']) || attribute(product, ['% спирту', 'Міцність']);
-    const value = Number(String(raw || '').replace(',', '.').replace(/[^d.]/g, ''));
+    const value = Number(String(raw || '').replace(',', '.').replace(/[^\d.]/g, ''));
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 

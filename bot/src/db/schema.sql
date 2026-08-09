@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS user_product_state (
     alternative_product_id TEXT,
     alternative_slug TEXT,
     alternative_comparison_price REAL,
+    alternative_checked_at DATETIME,
+    branch_id TEXT,
+    delivery_type TEXT,
+    observed_in_stock INTEGER,
+    in_stock_observation_count INTEGER DEFAULT 0,
+    observed_delivery_available INTEGER,
+    delivery_observation_count INTEGER DEFAULT 0,
     last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (tg_id, product_id),
     FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE

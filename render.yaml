@@ -5,7 +5,7 @@ services:
     plan: free
     buildCommand: npm ci --include=dev --prefix bot && npm run build --prefix bot && npm ci --include=dev --prefix webapp && npm run build --prefix webapp
     startCommand: node bot/dist/bot/index.js
-    healthCheckPath: /
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production

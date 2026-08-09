@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bell,
-  Check,
   ChevronRight,
   Heart,
   Link2,
   LogOut,
+  MapPin,
   Package,
   Plus,
   Settings as SettingsIcon,
   ShoppingCart,
+  ShieldCheck,
   Sparkles,
   Tag,
   X,
@@ -18,6 +19,7 @@ import {
 const API_URL = '';
 const SILPO_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
+const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 
 function getTgId(): number {
   try {
@@ -78,6 +80,10 @@ interface Product {
   stock: number;
   displayWeight?: string;
   company_id?: string;
+  special_price: number;
+  special_price_count: number;
+  effective_price: number;
+  reference_price: number;
 }
 
 type Settings = Record<SettingKey, boolean>;
@@ -87,6 +93,11 @@ interface UserProfile {
   avatar: string;
   branchId: string;
   deliveryType: string;
+  city: string;
+  address: string;
+  storeLabel: string;
+  isOpen: boolean | null;
+  checkedAt?: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -107,7 +118,7 @@ const SETTING_DEFINITIONS: Array<{
   description: string;
 }> = [
   { key: 'price_target', icon: '🎯', title: 'Бажана ціна', description: 'Коли товар коштує не дорожче за бажану ціну' },
-  { key: 'price_drop', icon: '📉', title: 'Зниження ціни', description: 'Коли ціна товару стала нижчою' },
+  { key: 'price_drop', icon: '📉', title: 'Помітне зниження ціни', description: 'Від 2% і щонайменше 2 ₴ — без копійчаного шуму' },
   { key: 'promo_new', icon: '🔥', title: 'Нові акції', description: 'Коли на товар зʼявилася акція' },
   { key: 'promo_personal', icon: '⭐', title: 'Нові персональні пропозиції', description: 'Коли в акаунті Сільпо з’являється нова пропозиція' },
   { key: 'in_stock', icon: '📦', title: 'Повернення в наявність', description: 'Коли недоступний товар знову можна купити' },
@@ -132,8 +143,15 @@ function normalizeProduct(item: any): Product {
   const id = String(item.id ?? item.product_id ?? item.productId ?? item.slug ?? '');
   const specialPrices = item.specialPrices;
   const hasExplicitPromo = item.hasPromo ?? item.has_promo ?? item.isPromo;
-  const hasSpecialPrice = (Array.isArray(specialPrices) && specialPrices.length > 0)
-    || (specialPrices && typeof specialPrices === 'object' && Object.keys(specialPrices).length > 0);
+  const specialOffer = Array.isArray(specialPrices)
+    ? specialPrices
+      .map((offer: any) => ({ price: numberValue(offer?.price), count: numberValue(offer?.count) }))
+      .filter((offer: { price: number }) => offer.price > 0 && offer.price < currentPrice)
+      .sort((left: { price: number }, right: { price: number }) => left.price - right.price)[0]
+    : undefined;
+  const specialPrice = specialOffer?.price || 0;
+  const effectivePrice = specialPrice || currentPrice;
+  const referencePrice = oldPrice > effectivePrice ? oldPrice : specialPrice ? currentPrice : currentPrice;
 
   return {
     product_id: id,
@@ -142,7 +160,7 @@ function normalizeProduct(item: any): Product {
     old_price: oldPrice,
     added_price: numberValue(item.added_price ?? item.addedPrice, oldPrice),
     image_url: String(item.image ?? item.imageUrl ?? item.image_url ?? ''),
-    has_promo: hasExplicitPromo !== undefined ? booleanValue(hasExplicitPromo) : hasSpecialPrice || oldPrice > currentPrice,
+    has_promo: booleanValue(hasExplicitPromo) || Boolean(specialPrice) || oldPrice > currentPrice,
     target_price: numberValue(item.target_price ?? item.targetPrice),
     slug: item.slug ? String(item.slug) : undefined,
     available: item.available !== undefined
@@ -155,6 +173,10 @@ function normalizeProduct(item: any): Product {
     stock: numberValue(item.stock, 1),
     displayWeight: item.displayWeight ?? item.display_weight ?? item.unit ?? undefined,
     company_id: item.companyId ? String(item.companyId) : undefined,
+    special_price: specialPrice,
+    special_price_count: specialOffer?.count || 0,
+    effective_price: effectivePrice,
+    reference_price: referencePrice,
   };
 }
 
@@ -182,6 +204,12 @@ function shortName(value: string): string {
   return value.trim().split(/\s+/)[0] || 'Акаунт';
 }
 
+function updatedLabel(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'Оновлено щойно';
+  return `Оновлено о ${date.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 function App() {
   const [tgId, setTgId] = useState<number>(() => getTgId());
   const [activeTab, setActiveTab] = useState<'favorites' | 'settings'>('favorites');
@@ -195,6 +223,7 @@ function App() {
   const [targetDraft, setTargetDraft] = useState('');
   const [savingTargetId, setSavingTargetId] = useState<string | null>(null);
   const [busyProductId, setBusyProductId] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState('');
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -236,12 +265,23 @@ function App() {
       const telegram = telegramUser();
       const normalizedProfile: UserProfile = {
         ...profile,
-        name: String(profile.name || telegram.name || 'Мій акаунт'),
+        name: String(telegram.name || profile.name || 'Мій акаунт'),
         avatar: String(profile.avatar || telegram.avatar || ''),
+        city: String(profile.city || ''),
+        address: String(profile.address || ''),
+        storeLabel: String(profile.storeLabel || 'Магазин Сільпо за замовчуванням'),
+        isOpen: typeof profile.isOpen === 'boolean' ? profile.isOpen : null,
       };
       const savedSettings = await settingsResponse.json();
       setUserProfile(normalizedProfile);
       setSettings({ ...DEFAULT_SETTINGS, ...savedSettings });
+
+      const storeStorageKey = `${ACTIVE_STORE_STORAGE_KEY}_${tgId}`;
+      const previousStore = window.localStorage.getItem(storeStorageKey);
+      if (previousStore && previousStore !== normalizedProfile.branchId) {
+        window.setTimeout(() => showToast('Магазин змінився — ціни перебазовано без хибних сповіщень'), 150);
+      }
+      window.localStorage.setItem(storeStorageKey, normalizedProfile.branchId);
 
       const favoritesResponse = await apiFetch(
         `${API_URL}/api/favorites?tg_id=${tgId}&branchId=${encodeURIComponent(normalizedProfile.branchId || '')}&deliveryType=${encodeURIComponent(normalizedProfile.deliveryType || '')}`
@@ -249,6 +289,7 @@ function App() {
       if (!favoritesResponse.ok) throw new Error('Favorites unavailable');
       const favoritesData = await favoritesResponse.json();
       setFavorites(Array.isArray(favoritesData.favorites) ? favoritesData.favorites.map(normalizeProduct) : []);
+      setLastUpdated(String(favoritesData.checkedAt || profile.checkedAt || new Date().toISOString()));
     } catch (error) {
       console.error('[Mini App] Failed to load data:', error);
       setIsAuthenticated(authenticatedSession);
@@ -294,7 +335,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [loadData]);
+  }, [loadData, tgId]);
 
   const connectSilpo = () => {
     if (!tgId) {
@@ -320,6 +361,7 @@ function App() {
       setIsAuthenticated(false);
       setUserProfile(null);
       setFavorites([]);
+      setLastUpdated('');
       showToast('Акаунт відʼєднано');
     } catch {
       showToast('Не вдалося відʼєднати акаунт');
@@ -343,7 +385,7 @@ function App() {
           product_id: product.product_id,
           target_price: targetPrice,
           name: product.name,
-          current_price: product.current_price,
+          current_price: product.effective_price,
           old_price: product.old_price,
           added_price: product.added_price,
           image_url: product.image_url,
@@ -358,7 +400,7 @@ function App() {
         : item));
       setModalProduct(null);
       showToast(result.notificationSent
-        ? 'Ціль досягнута — сповіщення вже надіслано'
+        ? 'Бажана ціна вже досягнута — сповіщення надіслано'
         : targetPrice > 0 ? 'Бажану ціну збережено' : 'Бажану ціну скинуто');
     } catch (error) {
       console.error('[Mini App] Failed to save target:', error);
@@ -403,11 +445,14 @@ function App() {
           companyId: product.company_id,
           branchId: userProfile.branchId,
           deliveryType: userProfile.deliveryType,
+          quantity: product.special_price_count > 1 ? product.special_price_count : 1,
         }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.error || 'Cart update failed');
-      showToast('Додано в кошик');
+      showToast(product.special_price_count > 1
+        ? `Додано ${product.special_price_count} шт — умову акції виконано`
+        : 'Додано в кошик');
     } catch (error) {
       console.error('[Mini App] Failed to add to cart:', error);
       showToast('Не вдалося додати в кошик');
@@ -438,11 +483,14 @@ function App() {
   };
 
   const targetHint = useMemo(() => {
-    if (!modalProduct || !targetDraft) return 'Сповіщення прийде, коли поточна ціна буде не більшою за цю суму.';
+    if (!modalProduct) return 'Сповіщення прийде, коли поточна ціна буде не більшою за цю суму.';
+    if (!targetDraft) return modalProduct.special_price_count > 1
+      ? `Враховуємо акційну ціну за одиницю. Умову «від ${modalProduct.special_price_count} шт» завжди вкажемо у сповіщенні.`
+      : 'Сповіщення прийде, коли поточна ціна буде не більшою за цю суму.';
     const target = numberValue(targetDraft);
-    return modalProduct.current_price <= target
-      ? 'Ціна вже відповідає цілі — після збереження перевіримо її одразу.'
-      : 'Бот перевірятиме ціну автоматично та напише, коли вона впаде до цілі.';
+    return modalProduct.effective_price <= target
+      ? `Ціна вже відповідає бажаній — перевіримо її одразу${modalProduct.special_price_count > 1 ? ` та вкажемо умову «від ${modalProduct.special_price_count} шт»` : ''}.`
+      : 'Бот перевірятиме ціну автоматично та напише, коли вона стане бажаною.';
   }, [modalProduct, targetDraft]);
 
   const openTargetModal = (product: Product) => {
@@ -502,10 +550,29 @@ function App() {
               <span className="count-pill">{favorites.length}</span>
             </div>
 
+            {userProfile && (
+              <div className="store-context-card">
+                <span className="store-context-icon"><MapPin size={20} /></span>
+                <span className="store-context-copy">
+                  <small>ЦІНИ ДЛЯ ВАШОГО МАГАЗИНУ</small>
+                  <strong>{userProfile.storeLabel}</strong>
+                  <span>{deliveryLabel(userProfile.deliveryType)} · {lastUpdated ? updatedLabel(lastUpdated) : 'Оновлено щойно'}</span>
+                </span>
+                {userProfile.isOpen !== null && <span className={userProfile.isOpen ? 'store-open' : 'store-open closed'}>{userProfile.isOpen ? 'Відкрито' : 'Зачинено'}</span>}
+              </div>
+            )}
+
+            {favorites.length > 0 && (
+              <div className="watch-summary">
+                <ShieldCheck size={19} />
+                <div><strong>Розумний контроль активний</strong><span>{favorites.length} товарів · {favorites.filter(item => item.has_promo).length} акцій · {favorites.filter(item => item.target_price > 0).length} бажаних цін</span></div>
+              </div>
+            )}
+
             {favorites.length > 0 ? (
               <div className="products-list">
                 {favorites.map(product => {
-                  const discount = discountPercent(product.current_price, product.old_price);
+                  const discount = discountPercent(product.effective_price, product.reference_price);
                   const link = productUrl(product);
                   const isBusy = busyProductId === product.product_id;
                   return (
@@ -517,7 +584,7 @@ function App() {
                       <div className="product-details">
                         <div className="product-topline">
                           <span className={product.available ? 'availability available' : 'availability'}>
-                            <span className="status-dot" />{product.available ? 'В наявності' : 'Очікується'}
+                            <span className="status-dot" />{product.available ? 'В цьому магазині' : 'Очікується'}
                           </span>
                           <button className="icon-button tiny-icon" onClick={() => void removeFromFavorites(product)} disabled={isBusy} aria-label="Видалити з Обраного">
                             <Heart size={18} fill="currentColor" />
@@ -526,9 +593,10 @@ function App() {
                         {link ? <a className="product-name" href={link} target="_blank" rel="noreferrer">{product.name}</a> : <h3 className="product-name">{product.name}</h3>}
                         <p className="product-meta">{product.displayWeight || '1 шт'}</p>
                         <div className="price-line">
-                          <strong>{product.available ? formatPrice(product.current_price) : 'Немає в продажу'}</strong>
+                          <strong>{formatPrice(product.effective_price)}</strong>
+                          {product.special_price_count > 1 && <span className="condition-badge">від {product.special_price_count} шт</span>}
                           {discount > 0 && <span className="discount-badge">−{discount}%</span>}
-                          {product.old_price > product.current_price && <del>{formatPrice(product.old_price)}</del>}
+                          {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
                         </div>
                         <button className={`target-button ${product.target_price > 0 ? 'target-set' : ''}`} onClick={() => openTargetModal(product)}>
                           <Sparkles size={15} />
@@ -537,9 +605,9 @@ function App() {
                         <div className="product-footer">
                           {product.available ? (
                             <button className="cart-button" onClick={() => void addToCart(product)} disabled={isBusy}>
-                              {isBusy ? <span className="button-spinner" /> : <><Plus size={18} /><span>У кошик</span></>}
+                              {isBusy ? <span className="button-spinner" /> : <><Plus size={18} /><span>{product.special_price_count > 1 ? `${product.special_price_count} шт у кошик` : 'У кошик'}</span></>}
                             </button>
-                          ) : <span className="unavailable-note"><Package size={16} /> Немає в магазині</span>}
+                          ) : <span className="unavailable-note"><Package size={16} /> Немає в цьому магазині</span>}
                         </div>
                       </div>
                     </article>
@@ -562,7 +630,7 @@ function App() {
                 </label>
               ))}
             </div>
-            <div className="info-card"><Check size={18} /><p>Зміни зберігаються одразу. Перевірка цін відбувається автоматично, а при збереженні бажаної ціни поточна ціна перевіряється без очікування наступного циклу.</p></div>
+            <div className="info-card"><ShieldCheck size={18} /><p><strong>Захист від хибних сповіщень.</strong> Наявність підтверджується двома перевірками, дрібні коливання ціни ігноруються, а після зміни магазину порівняння починається заново. Бажана ціна перевіряється одразу.</p></div>
           </section>
         )}
       </main>

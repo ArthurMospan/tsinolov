@@ -34,5 +34,6 @@ export function startChecker(bot: Telegraf) {
         finally { running = false; }
     };
     setTimeout(() => void run(), 5000);
-    setInterval(() => void run(), 60000);
+    // Five minutes is responsive enough for price tracking and avoids hammering Silpo MCP.
+    setInterval(() => void run(), 5 * 60 * 1000);
 }

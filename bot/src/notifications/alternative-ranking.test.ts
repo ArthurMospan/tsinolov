@@ -52,6 +52,16 @@ test('rejects a conflicting product style from the same brand', () => {
     assert.deepEqual(rankProductAlternatives(beer(), [dark]), []);
 });
 
+test('rejects the same brand when alcohol strength is materially different', () => {
+    const stronger = beer({
+        id: 'kozel-strong',
+        slug: 'pyvo-velkopopovitsky-kozel-svitle-strong-333333',
+        price: 28.99,
+        attributes: { ...beer().attributes, '% спирту': '5,2%' },
+    });
+    assert.deepEqual(rankProductAlternatives(beer(), [stronger]), []);
+});
+
 test('rejects a different package-size range', () => {
     const multipack = beer({
         id: 'kozel-pack',

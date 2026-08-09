@@ -5,6 +5,7 @@ import path from 'path';
 import db from '../db/index';
 import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
 import { profileIdentityFromMcp } from '../api/mcp-profile';
+import { getStoreContext } from '../api/store-context';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -12,6 +13,7 @@ import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.get('/health', (_req, res) => res.json({ status: 'ok', checkedAt: new Date().toISOString() }));
 app.use('/api', requireTelegramWebApp);
 app.use('/auth/start', requireTelegramWebApp);
 
@@ -164,47 +166,9 @@ app.get('/api/user/profile', async (req, res) => {
             console.warn('[MCP] Profile identity unavailable, using Telegram fallback:', error);
         }
 
-        // 2. Fetch Cart ID to get Store / Delivery Type
-        let branchId = '00000000-0000-0000-0000-000000000000';
-        let deliveryType = 'Unknown';
-        const cartIdResp = await callMCPTool(token, 'silpo_get_my_shopping_cart', {});
-        
-        let cartId = null;
-        if (cartIdResp?.result?.content) {
-            for (const item of cartIdResp.result.content) {
-                if (item.type === 'text') {
-                    try {
-                        const parsed = JSON.parse(item.text);
-                        cartId = parsed.shoppingCartId || parsed.id || parsed.cartId;
-                    } catch {}
-                }
-            }
-        }
-
-        // 3. Get Cart Details
-        if (cartId) {
-            const cartDetailsResp = await callMCPTool(token, 'silpo_get_shopping_cart_by_id', { shoppingCartId: String(cartId) });
-            if (cartDetailsResp?.result?.content) {
-                for (const item of cartDetailsResp.result.content) {
-                    if (item.type === 'text') {
-                        try {
-                            const parsed = JSON.parse(item.text);
-                            if (parsed.cart) {
-                                if (parsed.cart.deliveryType) deliveryType = parsed.cart.deliveryType;
-                                if (parsed.cart.shipments?.[0]?.branchId) {
-                                    branchId = parsed.cart.shipments[0].branchId;
-                                }
-                            } else {
-                                if (parsed.branchId) branchId = parsed.branchId;
-                                if (parsed.deliveryType) deliveryType = parsed.deliveryType;
-                            }
-                        } catch {}
-                    }
-                }
-            }
-        }
-
-        res.json({ authenticated: true, name, avatar, branchId, deliveryType });
+        // 2. Resolve the active cart's public store. Never expose the user's delivery address.
+        const store = await getStoreContext(token);
+        res.json({ authenticated: true, name, avatar, ...store, checkedAt: new Date().toISOString() });
     } catch (err) {
         console.error('[MCP] Store context fetch failed:', err);
         res.status(502).json({ error: 'Silpo store context is temporarily unavailable' });
@@ -238,11 +202,8 @@ app.get('/api/favorites', async (req, res) => {
             timeslotStart: new Date().toISOString(),
             timeslotEnd: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
         };
-        console.log('[DEBUG] Calling silpo_get_my_favorites with payload:', payload);
         // Call MCP to get real favorites
         const result = await callMCPTool(token, 'silpo_get_my_favorites', payload);
-        
-        console.log('[MCP] Favorites result:', JSON.stringify(result).substring(0, 500));
         
         // Parse MCP response  
         let favorites: any[] = [];
@@ -272,7 +233,7 @@ app.get('/api/favorites', async (req, res) => {
                 };
             });
         }
-        res.json({ authenticated: true, favorites });
+        res.json({ authenticated: true, favorites, checkedAt: new Date().toISOString() });
     } catch (err) {
         console.error('[MCP] Favorites fetch failed:', err);
         res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });

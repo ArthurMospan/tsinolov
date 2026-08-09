@@ -24,4 +24,4 @@ async function scanAllUsers() {
 
 console.log('Starting notification scanner...');
 void scanAllUsers();
-cron.schedule('* * * * *', () => void scanAllUsers());
+cron.schedule('*/5 * * * *', () => void scanAllUsers());

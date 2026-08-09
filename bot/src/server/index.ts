@@ -8,6 +8,7 @@ import { profileIdentityFromMcp } from '../api/mcp-profile';
 import { getStoreContext, listBranches, parseMcpContent, publicStoreLabel } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites } from '../api/monitoring-favorites';
+import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -247,6 +248,81 @@ app.get('/api/favorites', async (req, res) => {
     } catch (err) {
         console.error('[MCP] Favorites fetch failed:', err);
         res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });
+    }
+});
+
+// Search the selected Silpo branch and mark products already present in the
+// account's official Favorites list. At night, searchSilpoProducts retries a
+// daytime slot so a closed delivery window does not make the catalog vanish.
+app.get('/api/products/search', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    const query = String(req.query.q || '').trim();
+    const limit = Math.min(40, Math.max(1, Number(req.query.limit) || 24));
+    if (!tgId) return res.status(400).json({ error: 'Missing tg_id' });
+    if (query.length < 2) return res.json({ products: [] });
+    if (query.length > 120) return res.status(400).json({ error: 'Search query is too long' });
+
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const context = await getUserStoreContext(tgId, token);
+        const [searchResult, favoritesResult] = await Promise.allSettled([
+            searchSilpoProducts(token, context, query, limit),
+            getMonitoringFavorites(token, context),
+        ]);
+        if (searchResult.status === 'rejected') throw searchResult.reason;
+        const search = searchResult.value;
+        const favorites = favoritesResult.status === 'fulfilled' ? favoritesResult.value.products : [];
+        if (favoritesResult.status === 'rejected') {
+            console.warn('[Products] Favorites unavailable while marking search results:', favoritesResult.reason);
+        }
+        res.json({
+            products: search.products.map(product => ({
+                ...product,
+                isFavorite: isFavoriteProduct(product, favorites),
+            })),
+            store: context,
+            availabilityReliable: search.availabilityReliable,
+            availabilityBasis: search.availabilityBasis,
+            checkedFor: search.checkedFor,
+        });
+    } catch (error) {
+        console.error('[Products] Search failed:', error);
+        res.status(502).json({ error: 'Product search failed' });
+    }
+});
+
+app.post('/api/favorites/add', async (req, res) => {
+    const tgId = Number(req.body.tg_id);
+    const productId = String(req.body.product_id || '').trim();
+    const externalProductId = Number(req.body.externalProductId ?? req.body.external_product_id);
+    if (!tgId || !productId || !Number.isSafeInteger(externalProductId) || externalProductId <= 0) {
+        return res.status(400).json({ error: 'Missing or invalid product identity' });
+    }
+
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const product = { id: productId, externalProductId };
+        try {
+            const context = await getUserStoreContext(tgId, token);
+            const monitoring = await getMonitoringFavorites(token, context);
+            if (isFavoriteProduct(product, monitoring.products)) {
+                return res.json({ success: true, alreadyFavorite: true, synced: true });
+            }
+        } catch (error) {
+            // The Silpo operation is an upsert, so a temporary favorites-read
+            // failure must not prevent a valid add request from succeeding.
+            console.warn('[Favorites] Duplicate pre-check unavailable, continuing with official upsert:', error);
+        }
+
+        await callMCPTool(token, 'silpo_add_or_update_favorite_products', {
+            actions: [{ productId, externalProductId, toDelete: false }],
+        });
+        res.json({ success: true, alreadyFavorite: false, synced: true });
+    } catch (error) {
+        console.error('[Favorites] Failed to add favorite:', error);
+        res.status(502).json({ error: 'Failed to add to Silpo Favorites' });
     }
 });
 
@@ -541,11 +617,16 @@ app.post('/api/favorites/remove', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-        const externalProductId = slug ? parseInt(slug.split('-').pop() || '0', 10) : 0;
+        const suppliedExternalId = Number(req.body.externalProductId ?? req.body.external_product_id);
+        const slugExternalId = slug ? parseInt(slug.split('-').pop() || '', 10) : NaN;
+        const externalProductId = Number.isSafeInteger(suppliedExternalId) ? suppliedExternalId : slugExternalId;
+        if (!Number.isSafeInteger(externalProductId) || externalProductId <= 0) {
+            return res.status(400).json({ error: 'Missing external product id' });
+        }
         
         // Remove from MCP
         await callMCPTool(token, 'silpo_add_or_update_favorite_products', {
-            actions: [{ productId: product_id, externalProductId: isNaN(externalProductId) ? 0 : externalProductId, toDelete: true }]
+            actions: [{ productId: product_id, externalProductId, toDelete: true }]
         });
         // Remove from local DB
         await db.prepare('DELETE FROM user_favorites WHERE tg_id = ? AND product_id = ?').run(tg_id, product_id);

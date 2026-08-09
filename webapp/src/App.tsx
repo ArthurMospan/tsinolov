@@ -76,6 +76,7 @@ type SettingKey =
 
 interface Product {
   product_id: string;
+  external_product_id?: number;
   name: string;
   current_price: number;
   old_price: number;
@@ -93,6 +94,7 @@ interface Product {
   special_price_type: string;
   effective_price: number;
   reference_price: number;
+  is_favorite?: boolean;
 }
 
 type Settings = Record<SettingKey, boolean> & { onboarding_completed: boolean };
@@ -190,6 +192,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
 
   return {
     product_id: id,
+    external_product_id: numberValue(item.externalProductId ?? item.external_product_id) || undefined,
     name: String(item.title ?? item.name ?? item.productName ?? 'Товар'),
     current_price: currentPrice,
     old_price: oldPrice,
@@ -213,6 +216,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
     special_price_type: specialOffer?.type || '',
     effective_price: effectivePrice,
     reference_price: referencePrice,
+    is_favorite: booleanValue(item.isFavorite ?? item.is_favorite),
   };
 }
 
@@ -267,6 +271,12 @@ function App() {
   const [storeSearchResults, setStoreSearchResults] = useState<StoreOption[]>([]);
   const [storeLoading, setStoreLoading] = useState(false);
   const [addingDealBasket, setAddingDealBasket] = useState(false);
+  const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+  const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
+  const [productSearchError, setProductSearchError] = useState(false);
+  const [addingFavoriteId, setAddingFavoriteId] = useState<string | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -428,6 +438,46 @@ function App() {
     };
   }, [storePickerOpen, storeSearch, tgId]);
 
+  useEffect(() => {
+    const query = productSearch.trim();
+    if (!productSearchOpen || query.length < 2) {
+      setProductSearchResults([]);
+      setProductSearchLoading(false);
+      setProductSearchError(false);
+      return;
+    }
+
+    let cancelled = false;
+    setProductSearchLoading(true);
+    setProductSearchError(false);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await apiFetch(`${API_URL}/api/products/search?tg_id=${tgId}&q=${encodeURIComponent(query)}&limit=30`);
+        if (!response.ok) throw new Error('Product search failed');
+        const result = await response.json();
+        const availabilityReliable = booleanValue(result.availabilityReliable, true);
+        if (!cancelled) {
+          setProductSearchResults(Array.isArray(result.products)
+            ? result.products.map((item: any) => normalizeProduct(item, availabilityReliable))
+            : []);
+        }
+      } catch (error) {
+        console.error('[Mini App] Product search failed:', error);
+        if (!cancelled) {
+          setProductSearchResults([]);
+          setProductSearchError(true);
+        }
+      } finally {
+        if (!cancelled) setProductSearchLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [productSearchOpen, productSearch, tgId]);
+
   const connectSilpo = () => {
     if (!tgId) {
       showToast('Відкрийте застосунок через Telegram');
@@ -532,6 +582,7 @@ function App() {
       });
       if (!response.ok) throw new Error('Store selection failed');
       setStorePickerOpen(false);
+      setProductSearchOpen(false);
       setStoreOptions(null);
       setActiveTab('favorites');
       showToast('Магазин змінено — ціни перераховуються');
@@ -541,6 +592,78 @@ function App() {
       showToast('Не вдалося змінити магазин');
     } finally {
       setStoreLoading(false);
+    }
+  };
+
+  const openProductSearch = () => {
+    setProductSearch('');
+    setProductSearchResults([]);
+    setProductSearchError(false);
+    setProductSearchOpen(true);
+  };
+
+  const refreshFavorites = async (expectedProductId?: string): Promise<boolean> => {
+    try {
+      const response = await apiFetch(`${API_URL}/api/favorites?tg_id=${tgId}`);
+      if (!response.ok) return false;
+      const result = await response.json();
+      const availabilityReliable = booleanValue(result.availabilityReliable, true);
+      const products = Array.isArray(result.favorites)
+        ? result.favorites.map((item: any) => normalizeProduct(item, availabilityReliable))
+        : [];
+      if (expectedProductId && !products.some((item: Product) => item.product_id === expectedProductId)) return false;
+      setFavorites(products);
+      setAvailabilityBasis(result.availabilityBasis || 'current_slot');
+      setLastUpdated(String(result.checkedAt || new Date().toISOString()));
+      return true;
+    } catch (error) {
+      console.warn('[Mini App] Favorites refresh delayed:', error);
+      return false;
+    }
+  };
+
+  const addToFavorites = async (product: Product) => {
+    if (!product.external_product_id) {
+      showToast('Сільпо не повернув артикул цього товару');
+      return;
+    }
+    const alreadyFavorite = product.is_favorite || favorites.some(item =>
+      item.product_id === product.product_id
+      || (item.external_product_id && item.external_product_id === product.external_product_id));
+    if (alreadyFavorite) return;
+
+    setAddingFavoriteId(product.product_id);
+    try {
+      const response = await apiFetch(`${API_URL}/api/favorites/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tg_id: tgId,
+          product_id: product.product_id,
+          externalProductId: product.external_product_id,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success || !result.synced) throw new Error(result.error || 'Favorite add failed');
+
+      const favoriteProduct = { ...product, is_favorite: true, target_price: 0 };
+      setProductSearchResults(items => items.map(item => item.product_id === product.product_id ? favoriteProduct : item));
+      setFavorites(items => items.some(item => item.product_id === product.product_id) ? items : [favoriteProduct, ...items]);
+      showToast(result.alreadyFavorite
+        ? 'Товар уже є в Улюблених Сільпо'
+        : 'Додано в Улюблені — синхронізовано із Сільпо');
+
+      void (async () => {
+        for (const delay of [700, 1800, 4000]) {
+          await new Promise(resolve => window.setTimeout(resolve, delay));
+          if (await refreshFavorites(product.product_id)) break;
+        }
+      })();
+    } catch (error) {
+      console.error('[Mini App] Failed to add favorite:', error);
+      showToast('Не вдалося додати в Улюблені Сільпо');
+    } finally {
+      setAddingFavoriteId(null);
     }
   };
 
@@ -645,7 +768,12 @@ function App() {
       const response = await apiFetch(`${API_URL}/api/favorites/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tg_id: tgId, product_id: product.product_id, slug: product.slug }),
+        body: JSON.stringify({
+          tg_id: tgId,
+          product_id: product.product_id,
+          externalProductId: product.external_product_id,
+          slug: product.slug,
+        }),
       });
       if (!response.ok) throw new Error('Favorite removal failed');
       showToast('Товар прибрано з Улюблених');
@@ -813,6 +941,15 @@ function App() {
               </div>
             )}
 
+            <button className="product-search-launcher" type="button" onClick={openProductSearch}>
+              <span className="product-search-launcher-icon"><Search size={20} /></span>
+              <span>
+                <strong>Знайти товар у Сільпо</strong>
+                <small>Додамо одразу сюди й в офіційні Улюблені</small>
+              </span>
+              <Plus size={19} />
+            </button>
+
             <div className="telegram-delivery-card">
               <span className="telegram-delivery-icon"><Send size={18} /></span>
               <span><strong>Сповіщення приходять у Telegram</strong><small>Бот напише прямо в чат — застосунок можна не тримати відкритим.</small></span>
@@ -954,6 +1091,87 @@ function App() {
                 <button className="onboarding-skip" type="button" disabled={savingOnboarding} onClick={() => void saveOnboarding(DEFAULT_SETTINGS)}>Не надсилати нічого</button>
               </>
             )}
+          </section>
+        </div>
+      )}
+
+      {productSearchOpen && (
+        <div className="modal-backdrop product-search-backdrop" role="presentation" onMouseDown={() => setProductSearchOpen(false)}>
+          <section className="product-search-sheet" role="dialog" aria-modal="true" aria-labelledby="product-search-title" onMouseDown={event => event.stopPropagation()}>
+            <div className="sheet-handle" />
+            <div className="sheet-header">
+              <div><p className="section-kicker">КАТАЛОГ СІЛЬПО</p><h2 id="product-search-title">Додати в Улюблені</h2></div>
+              <button className="icon-button" type="button" onClick={() => setProductSearchOpen(false)} aria-label="Закрити"><X size={20} /></button>
+            </div>
+            <p className="product-search-context"><MapPin size={14} /><span>Ціна й наявність для <strong>{userProfile?.storeLabel}</strong></span></p>
+            <label className="product-search-input">
+              <Search size={19} />
+              <input
+                value={productSearch}
+                onChange={event => setProductSearch(event.target.value)}
+                placeholder="Назва товару або артикул"
+                autoFocus
+              />
+              {productSearch && <button type="button" onClick={() => setProductSearch('')} aria-label="Очистити пошук"><X size={16} /></button>}
+            </label>
+
+            <div className="product-search-scroll">
+              {productSearch.trim().length < 2 ? (
+                <div className="product-search-empty">
+                  <span><Search size={27} /></span>
+                  <strong>Що хочете відстежувати?</strong>
+                  <p>Напишіть хоча б 2 символи. Пошук врахує асортимент і ціни вибраного магазину.</p>
+                </div>
+              ) : productSearchLoading ? (
+                <div className="product-search-state"><span className="loading-spinner" />Шукаємо в каталозі Сільпо…</div>
+              ) : productSearchError ? (
+                <div className="product-search-empty error">
+                  <strong>Пошук тимчасово недоступний</strong>
+                  <p>Перевірте з’єднання або спробуйте інший запит.</p>
+                </div>
+              ) : productSearchResults.length === 0 ? (
+                <div className="product-search-empty">
+                  <strong>Нічого не знайшли</strong>
+                  <p>Спробуйте коротшу назву, бренд або точний артикул товару.</p>
+                </div>
+              ) : (
+                <div className="search-results-list">
+                  {productSearchResults.map(product => {
+                    const isFavorite = product.is_favorite || favorites.some(item =>
+                      item.product_id === product.product_id
+                      || (item.external_product_id && item.external_product_id === product.external_product_id));
+                    const isAdding = addingFavoriteId === product.product_id;
+                    return (
+                      <article className="search-result-card" key={product.product_id}>
+                        <div className="search-result-image"><ProductImage product={product} /></div>
+                        <div className="search-result-copy">
+                          <span className={product.available === true ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
+                            <span className="status-dot" />{product.available === true ? 'Є в магазині' : product.available === null ? 'Уточнимо вдень' : 'Зараз немає'}
+                          </span>
+                          <strong>{product.name}</strong>
+                          <small>{product.displayWeight || '1 шт'}</small>
+                          <div className="search-result-price">
+                            <b>{formatPrice(product.effective_price)}</b>
+                            {product.special_price_count > 1 && <span>від {product.special_price_count} шт</span>}
+                            {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
+                          </div>
+                        </div>
+                        <button
+                          className={isFavorite ? 'search-add-button added' : 'search-add-button'}
+                          type="button"
+                          disabled={Boolean(isFavorite || isAdding)}
+                          onClick={() => void addToFavorites(product)}
+                          aria-label={isFavorite ? 'Уже в Улюблених' : 'Додати в Улюблені'}
+                        >
+                          {isAdding ? <span className="button-spinner" /> : isFavorite ? <Check size={18} /> : <Plus size={19} />}
+                          <span>{isFavorite ? 'Додано' : 'Додати'}</span>
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </section>
         </div>
       )}

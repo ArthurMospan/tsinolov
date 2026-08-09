@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 const API_URL = '';
-const SILPO_LOGO_URL = 'https://staticv2.silpo.ua/apps/sf-web-silpo-app/release-2-105-1/images/rizdzvonyky/intro-silpo.svg';
+const SILPO_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
 
 function getTgId(): number {
   try {

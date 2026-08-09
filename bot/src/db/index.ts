@@ -65,6 +65,9 @@ const schemaStatements = [
         delivery_available INTEGER,
         is_smart_buy INTEGER,
         alternative_price REAL,
+        alternative_product_id TEXT,
+        alternative_slug TEXT,
+        alternative_comparison_price REAL,
         last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (tg_id, product_id),
         FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
@@ -91,9 +94,15 @@ async function runSchemaStatement(sql: string): Promise<void> {
 async function bootstrap(): Promise<void> {
     for (const statement of schemaStatements) await runSchemaStatement(statement);
 
-    for (const column of ['is_personal_promo', 'delivery_available']) {
+    for (const [column, type] of [
+        ['is_personal_promo', 'INTEGER'],
+        ['delivery_available', 'INTEGER'],
+        ['alternative_product_id', 'TEXT'],
+        ['alternative_slug', 'TEXT'],
+        ['alternative_comparison_price', 'REAL']
+    ] as const) {
         try {
-            await runSchemaStatement(`ALTER TABLE user_product_state ADD COLUMN ${column} INTEGER`);
+            await runSchemaStatement(`ALTER TABLE user_product_state ADD COLUMN ${column} ${type}`);
         } catch {
             // The column already exists on an initialized database.
         }

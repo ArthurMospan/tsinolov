@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS user_product_state (
     delivery_available INTEGER,
     is_smart_buy INTEGER,
     alternative_price REAL,
+    alternative_product_id TEXT,
+    alternative_slug TEXT,
+    alternative_comparison_price REAL,
     last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (tg_id, product_id),
     FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE

@@ -21,8 +21,9 @@ export class SilpoMCPClient {
         // Initialize transport for SSE (Server-Sent Events) over HTTP
         const url = new URL(MCP_ENDPOINT);
         this.transport = new SSEClientTransport(url, {
-            headers: {
-                'Authorization': `Bearer ${MCP_TOKEN}`
+            eventSourceInit: {} as any,
+            requestInit: {
+                headers: { 'Authorization': `Bearer ${MCP_TOKEN}` }
             }
         });
     }

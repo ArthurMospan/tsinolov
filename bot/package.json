@@ -5,14 +5,18 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx src/bot/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/bot/index.js",
     "db:init": "tsx src/db/init.ts",
-    "worker": "tsx src/worker/scanner.ts"
+    "worker": "tsx src/worker/scanner.ts",
+    "worker:prod": "node dist/worker/scanner.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "axios": "^1.19.0",
     "better-sqlite3": "^13.0.3",

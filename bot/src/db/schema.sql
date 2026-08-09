@@ -1,4 +1,5 @@
 DROP TABLE IF EXISTS user_favorites;
+DROP TABLE IF EXISTS user_product_state;
 DROP TABLE IF EXISTS products_state;
 DROP TABLE IF EXISTS user_settings;
 DROP TABLE IF EXISTS users;
@@ -7,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     tg_id INTEGER PRIMARY KEY,
     access_token TEXT,
     refresh_token TEXT,
+    mcp_token TEXT,
     notification_frequency TEXT DEFAULT 'all', -- 'important', 'all', 'daily_digest'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -44,4 +46,19 @@ CREATE TABLE IF NOT EXISTS user_favorites (
     FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE,
     FOREIGN KEY(product_id) REFERENCES products_state(product_id) ON DELETE CASCADE,
     UNIQUE(tg_id, product_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_product_state (
+    tg_id INTEGER NOT NULL,
+    product_id TEXT NOT NULL,
+    current_price REAL,
+    in_stock INTEGER,
+    has_promo INTEGER,
+    is_personal_promo INTEGER,
+    delivery_available INTEGER,
+    is_smart_buy INTEGER,
+    alternative_price REAL,
+    last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tg_id, product_id),
+    FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
 );

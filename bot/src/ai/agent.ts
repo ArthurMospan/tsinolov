@@ -52,6 +52,7 @@ export async function handleAgentQuery(userId: number, text: string): Promise<st
             if (message.tool_calls) {
                 // 3. LLM decided to call tools
                 for (const toolCall of message.tool_calls) {
+                    if (!('function' in toolCall)) continue;
                     const functionName = toolCall.function.name;
                     const functionArgs = JSON.parse(toolCall.function.arguments);
 
@@ -62,7 +63,8 @@ export async function handleAgentQuery(userId: number, text: string): Promise<st
                     try {
                         const mcpResponse = await mcpClient.callTool(functionName, functionArgs);
                         // MCP SDK returns { content: [{ type: "text", text: "..." }] }
-                        toolResult = mcpResponse.content.map((c: any) => c.text).join('\n');
+                        const content = Array.isArray(mcpResponse.content) ? mcpResponse.content : [];
+                        toolResult = content.map((c: any) => c.text || '').join('\n');
                     } catch (err: any) {
                         toolResult = `Error executing tool: ${err.message}`;
                     }

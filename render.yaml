@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: tsinolov
+    runtime: node
+    plan: free
+    buildCommand: npm ci --prefix bot && npm run build --prefix bot && npm ci --prefix webapp && npm run build --prefix webapp
+    startCommand: node bot/dist/bot/index.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SERVER_HOST
+        value: 0.0.0.0
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

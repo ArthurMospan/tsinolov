@@ -941,14 +941,16 @@ function App() {
               </div>
             )}
 
-            <button className="product-search-launcher" type="button" onClick={openProductSearch}>
-              <span className="product-search-launcher-icon"><Search size={20} /></span>
-              <span>
-                <strong>Знайти товар у Сільпо</strong>
-                <small>Додамо одразу сюди й в офіційні Улюблені</small>
-              </span>
-              <Plus size={19} />
-            </button>
+            {isAuthenticated && (
+              <button className="product-search-launcher" type="button" onClick={openProductSearch}>
+                <span className="product-search-launcher-icon"><Search size={20} /></span>
+                <span>
+                  <strong>Знайти товар у Сільпо</strong>
+                  <small>Додамо одразу сюди й в офіційні Улюблені</small>
+                </span>
+                <Plus size={19} />
+              </button>
+            )}
 
             <div className="telegram-delivery-card">
               <span className="telegram-delivery-icon"><Send size={18} /></span>

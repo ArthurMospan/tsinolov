@@ -77,7 +77,8 @@ function validateInitData(initData: string, expectedTgId: number): boolean {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, value]) => `${key}=${value}`)
         .join('\n');
-    const secretKey = crypto.createHmac('sha256', botToken).update('WebAppData').digest();
+    // Telegram defines WebAppData as the HMAC key and the bot token as data.
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
     const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
     if (calculatedHash.length !== receivedHash.length) return false;
 

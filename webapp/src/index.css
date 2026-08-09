@@ -1,0 +1,235 @@
+:root {
+  --silpo-orange: #f47920;
+  --silpo-orange-light: #ff8b38;
+  --silpo-green: #00a046;
+  --bg-color: #f7f7f9;
+  --card-bg: rgba(255, 255, 255, 0.8);
+  --text-main: #333333;
+  --text-secondary: #777777;
+  --border-radius: 16px;
+  --glass-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
+  --glass-border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  padding-bottom: 80px; /* Space for bottom nav */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: var(--card-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--border-radius);
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.header {
+  padding: 20px;
+  background: white;
+  border-bottom: 1px solid #eee;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--silpo-orange);
+}
+
+.container {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Cards */
+.product-card {
+  display: flex;
+  padding: 16px;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.product-image {
+  width: 72px;
+  height: 72px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: white;
+}
+
+.product-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.product-name {
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.product-price {
+  font-weight: 700;
+  color: var(--silpo-green);
+  font-size: 18px;
+}
+
+.product-old-price {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-left: 8px;
+}
+
+/* Target Price Input */
+.target-price-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.target-price-container label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.target-price-input {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 6px 12px;
+  width: 80px;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--silpo-orange);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.target-price-input:focus {
+  border-color: var(--silpo-orange);
+}
+
+/* Settings */
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+}
+
+.setting-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.setting-title {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.setting-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* Custom Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 28px;
+}
+
+.switch input { 
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 34px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: var(--silpo-orange);
+}
+
+input:checked + .slider:before {
+  transform: translateX(22px);
+}
+
+/* Tabs Nav */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  width: 100%;
+  display: flex;
+  background: white;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  padding: 12px 20px 24px;
+  z-index: 20;
+}
+
+.nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.nav-item.active {
+  color: var(--silpo-orange);
+}

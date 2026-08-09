@@ -69,7 +69,13 @@ bot.command('check_now', async (ctx) => {
 // Start API Server
 startServer();
 
-bot.launch().then(() => {
+let stopping = false;
+let pollingRetryTimer: NodeJS.Timeout | undefined;
+let pollingRetryAttempt = 0;
+
+async function startTelegramPolling(): Promise<void> {
+    try {
+        await bot.launch();
     console.log('✅ Telegram Bot started!');
     bot.telegram.setChatMenuButton({
         menuButton: {
@@ -78,13 +84,28 @@ bot.launch().then(() => {
             web_app: { url: webAppUrl }
         }
     }).catch(console.error);
-}).catch(err => {
-    console.error('❌ Bot launch failed:', err);
-    process.exit(1);
-});
+    } catch (error) {
+        if (stopping) return;
+
+        // Render may briefly overlap the old and new release. Telegram permits only
+        // one long-polling session, so a temporary conflict must not kill the API.
+        pollingRetryAttempt += 1;
+        const retryMs = Math.min(30_000, 1_000 * 2 ** Math.min(pollingRetryAttempt, 5));
+        console.error(`Telegram polling failed; retrying in ${retryMs / 1000}s`, error);
+        pollingRetryTimer = setTimeout(() => void startTelegramPolling(), retryMs);
+    }
+}
+
+void startTelegramPolling();
 
 // Enable graceful stop
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+function stopBot(signal: 'SIGINT' | 'SIGTERM') {
+    stopping = true;
+    if (pollingRetryTimer) clearTimeout(pollingRetryTimer);
+    bot.stop(signal);
+}
+
+process.once('SIGINT', () => stopBot('SIGINT'));
+process.once('SIGTERM', () => stopBot('SIGTERM'));
 
 startChecker(bot);

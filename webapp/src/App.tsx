@@ -290,12 +290,14 @@ function productDisplayWeight(item: any): string | undefined {
     item?.displayWeight, item?.display_weight, item?.weightText, item?.weight_text,
     item?.netWeightText, item?.net_weight_text, item?.size, item?.volumeText, item?.volume_text,
     item?.displayUnit, item?.display_unit,
+    item?.netWeight, item?.net_weight, item?.packageWeight, item?.package_weight, item?.weight,
   ].find(value => typeof value === 'string' && value.trim());
   if (direct) return String(direct).trim();
 
   const rawUnit = item?.unitOfMeasure ?? item?.unit_of_measure ?? item?.measurementUnit
     ?? item?.measurement_unit ?? item?.measureUnit ?? item?.measure_unit ?? item?.measure
-    ?? item?.priceUnit ?? item?.price_unit ?? item?.baseUnit ?? item?.base_unit ?? item?.uom ?? item?.unit;
+    ?? item?.unitName ?? item?.unit_name ?? item?.priceUnit ?? item?.price_unit
+    ?? item?.baseUnit ?? item?.base_unit ?? item?.uom ?? item?.unit;
   const unitValue = typeof rawUnit === 'object'
     ? rawUnit?.shortName ?? rawUnit?.short_name ?? rawUnit?.abbreviation ?? rawUnit?.symbol
       ?? rawUnit?.name ?? rawUnit?.label ?? rawUnit?.title ?? rawUnit?.text ?? rawUnit?.value ?? rawUnit?.code

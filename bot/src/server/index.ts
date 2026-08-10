@@ -10,6 +10,7 @@ import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites, productAvailability } from '../api/monitoring-favorites';
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
 import { getCatalogCategories, getCatalogProducts } from '../api/product-catalog';
+import { enrichProductsWithDetails } from '../api/product-details';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -217,7 +218,7 @@ app.get('/api/favorites', async (req, res) => {
     try {
         const context = await getUserStoreContext(tgId, token);
         const monitoring = await getMonitoringFavorites(token, context);
-        let favorites = monitoring.products;
+        let favorites = await enrichProductsWithDetails(token, context, monitoring.products);
         // Merge with DB targets
         const userFavs = await db.prepare('SELECT product_id, target_price FROM user_favorites WHERE tg_id = ?').all(tgId) as any[];
         const targetMap = new Map();

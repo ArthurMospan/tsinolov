@@ -30,7 +30,7 @@ button { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 
 .app-shell { width: 100%; min-height: var(--tg-viewport-stable-height, 100dvh); padding-bottom: calc(28px + var(--app-safe-bottom)); }
-.app-header { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: calc(80px + var(--app-safe-top)); padding: calc(28px + var(--app-safe-top)) 18px 12px; color: white; background: linear-gradient(135deg, #e85d0b 0%, #f47b26 100%); box-shadow: 0 4px 18px rgba(218, 88, 11, .2); }
+.app-header { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: calc(76px + var(--app-safe-top)); padding: calc(24px + var(--app-safe-top)) 18px 12px; color: white; background: linear-gradient(135deg, #e85d0b 0%, #f47b26 100%); box-shadow: 0 4px 18px rgba(218, 88, 11, .2); }
 .brand-lockup, .header-actions, .product-topline, .price-line, .product-footer, .section-heading, .sheet-header { display: flex; align-items: center; }
 .brand-lockup { gap: 10px; min-width: 0; }
 .brand-home-button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
@@ -64,7 +64,7 @@ a { color: inherit; }
 .icon-button { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 12px; color: #555; background: #f2f2f0; cursor: pointer; transition: transform .18s ease, background .18s ease; }
 .icon-button:active { transform: scale(.94); }
 .tiny-icon { width: 32px; height: 32px; border-radius: 10px; color: #ef476f; background: #fff0f3; }
-.connect-screen { display: grid; min-height: calc(var(--tg-viewport-stable-height, 100dvh) - var(--app-safe-top) - 80px); place-items: center; padding: 28px 16px calc(28px + var(--app-safe-bottom)); }
+.connect-screen { display: grid; min-height: calc(var(--tg-viewport-stable-height, 100dvh) - var(--app-safe-top) - 76px); place-items: center; padding: 28px 16px calc(28px + var(--app-safe-bottom)); }
 .connect-card { display: flex; width: min(100%, 390px); min-height: 154px; align-items: center; justify-content: center; flex-direction: column; gap: 13px; margin: 0; padding: 24px; border: 0; border-radius: 24px; color: #713207; background: linear-gradient(135deg, #fff0e4, #ffe4d0); box-shadow: 0 12px 34px rgba(218,88,11,.1); text-align: center; cursor: pointer; }
 .connect-card:active { transform: scale(.99); }
 .connect-icon { display: grid; width: 38px; height: 38px; place-items: center; flex: 0 0 38px; border-radius: 12px; color: white; background: var(--orange); }
@@ -128,7 +128,7 @@ a { color: inherit; }
 .target-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: fit-content; max-width: 100%; margin-top: 9px; padding: 8px 10px; overflow: hidden; border: 0; border-radius: 10px; color: #315f75; background: linear-gradient(135deg, rgba(124,58,237,.09), rgba(14,165,168,.12)); box-shadow: none; font-size: 11px; font-weight: 850; text-align: center; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .target-button span { color: #4f3292; background: linear-gradient(100deg, #5127a5, #087b7e); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .target-button svg { flex: 0 0 auto; color: #167a80; }
-.target-button.target-set { color: white; background: linear-gradient(135deg, var(--magic-purple), var(--magic-teal)); box-shadow: 0 7px 18px rgba(91,63,173,.22); }
+.target-button.target-set { color: white; background: linear-gradient(135deg, var(--magic-purple), var(--magic-teal)); box-shadow: none; }
 .target-button.target-set span { color: white; background: none; -webkit-text-fill-color: white; }
 .target-button.target-set svg { color: white; }
 .product-footer { min-height: 36px; margin-top: auto; padding-top: 10px; }

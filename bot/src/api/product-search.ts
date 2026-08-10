@@ -92,7 +92,7 @@ export async function searchSilpoProducts(
         if (daytime.length > 0 && !allProductsUnexpectedlyUnavailable(daytime)) {
             return {
                 products: daytime,
-                availabilityReliable: true,
+                availabilityReliable: false,
                 availabilityBasis: 'next_day_reference',
                 checkedFor: reference.start.toISOString(),
             };

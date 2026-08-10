@@ -24,9 +24,6 @@ export function productAvailability(product: any): boolean | null {
     for (const field of ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']) {
         if (product?.[field] === true || product?.[field] === 1 || product?.[field] === '1' || product?.[field] === 'true') return false;
     }
-    for (const field of ['in_stock', 'inStock', 'is_in_stock', 'isInStock']) {
-        if (product?.[field] !== undefined) return product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true';
-    }
     if (product?.stock !== undefined && product?.stock !== null && product?.stock !== '') {
         if (typeof product.stock === 'string') {
             const normalized = product.stock.trim().toLowerCase();
@@ -36,14 +33,21 @@ export function productAvailability(product: any): boolean | null {
         const numeric = Number(product.stock);
         if (Number.isFinite(numeric)) return numeric > 0;
     }
-    for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity']) {
+    for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity', 'quantityAvailable', 'quantity_available']) {
         if (product?.[field] !== undefined && product?.[field] !== null && product?.[field] !== '') {
             const numeric = Number(product[field]);
             if (Number.isFinite(numeric)) return numeric > 0;
         }
     }
-    for (const field of ['available', 'isAvailable', 'is_available']) {
+    for (const field of [
+        'in_stock', 'inStock', 'is_in_stock', 'isInStock',
+        'deliveryAvailable', 'delivery_available', 'isAvailableForDelivery', 'availableForDelivery'
+    ]) {
         if (product?.[field] !== undefined) return product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true';
+    }
+    for (const field of ['available', 'isAvailable', 'is_available']) {
+        if (product?.[field] !== undefined
+            && !(product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true')) return false;
     }
     return null;
 }
@@ -87,7 +91,7 @@ export async function getMonitoringFavorites(
         if (!allProductsUnexpectedlyUnavailable(daytime)) {
             return {
                 products: daytime,
-                availabilityReliable: true,
+                availabilityReliable: false,
                 availabilityBasis: 'next_day_reference',
                 checkedFor: reference.start.toISOString(),
             };

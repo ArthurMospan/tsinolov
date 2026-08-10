@@ -224,7 +224,8 @@ export async function getCatalogProducts(
         products,
         hasMore: products.length === limit,
         nextOffset: offset + products.length,
-        availabilityReliable: !products.some(product => productAvailability(product) === null),
+        availabilityReliable: basis === 'current_slot'
+            && !products.some(product => productAvailability(product) === null),
         availabilityBasis: basis,
         checkedFor: start.toISOString(),
     };

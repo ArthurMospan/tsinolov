@@ -31,6 +31,7 @@ const SILPO_LOADER_LOGO_URL = '/Silpo_outline_logo.svg';
 const SILPO_ACCOUNT_URL = 'https://my.silpo.ua/';
 const SILPO_BASKET_URL = 'https://silpo.ua/basket';
 const SILPO_APP_LINK = 'https://link.silpo.ua/bc29f9776abb';
+const SILPO_BASKET_APP_LINK = `${SILPO_APP_LINK}?deep_link_value=basket`;
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 
@@ -257,9 +258,6 @@ function productAvailabilityValue(item: any): boolean | null {
   for (const field of ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']) {
     if (booleanValue(item?.[field])) return false;
   }
-  for (const field of ['in_stock', 'inStock', 'is_in_stock', 'isInStock']) {
-    if (item?.[field] !== undefined && item?.[field] !== null) return booleanValue(item[field]);
-  }
   if (item?.stock !== undefined && item?.stock !== null && item?.stock !== '') {
     if (typeof item.stock === 'string') {
       const normalized = item.stock.trim().toLowerCase();
@@ -269,16 +267,50 @@ function productAvailabilityValue(item: any): boolean | null {
     const stock = Number(item.stock);
     if (Number.isFinite(stock)) return stock > 0;
   }
-  for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity']) {
+  for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity', 'quantityAvailable', 'quantity_available']) {
     if (item?.[field] !== undefined && item?.[field] !== null && item?.[field] !== '') {
       const quantity = Number(item[field]);
       if (Number.isFinite(quantity)) return quantity > 0;
     }
   }
-  for (const field of ['available', 'isAvailable', 'is_available']) {
+  for (const field of [
+    'in_stock', 'inStock', 'is_in_stock', 'isInStock',
+    'deliveryAvailable', 'delivery_available', 'isAvailableForDelivery', 'availableForDelivery',
+  ]) {
     if (item?.[field] !== undefined && item?.[field] !== null) return booleanValue(item[field]);
   }
+  for (const field of ['available', 'isAvailable', 'is_available']) {
+    if (item?.[field] !== undefined && item?.[field] !== null && !booleanValue(item[field])) return false;
+  }
   return null;
+}
+
+function productDisplayWeight(item: any): string | undefined {
+  const direct = [
+    item?.displayWeight, item?.display_weight, item?.weightText, item?.weight_text,
+    item?.netWeightText, item?.net_weight_text, item?.size, item?.volumeText, item?.volume_text,
+  ].find(value => typeof value === 'string' && value.trim());
+  if (direct) return String(direct).trim();
+
+  const rawUnit = item?.unitOfMeasure ?? item?.unit_of_measure ?? item?.measurementUnit
+    ?? item?.measurement_unit ?? item?.priceUnit ?? item?.price_unit ?? item?.unit;
+  const unitValue = typeof rawUnit === 'object'
+    ? rawUnit?.shortName ?? rawUnit?.short_name ?? rawUnit?.name ?? rawUnit?.label ?? rawUnit?.code
+    : rawUnit;
+  const normalizedUnit = String(unitValue || '').trim().toLowerCase();
+  const unit = ({
+    kg: 'кг', kilogram: 'кг', kilograms: 'кг', 'кг': 'кг',
+    g: 'г', gr: 'г', gram: 'г', grams: 'г', 'г': 'г',
+    l: 'л', liter: 'л', litre: 'л', 'л': 'л',
+    ml: 'мл', milliliter: 'мл', millilitre: 'мл', 'мл': 'мл',
+    pcs: 'шт', pc: 'шт', piece: 'шт', pieces: 'шт', 'шт': 'шт',
+  } as Record<string, string>)[normalizedUnit];
+  const amount = numberValue(item?.netWeight ?? item?.net_weight ?? item?.packageWeight
+    ?? item?.package_weight ?? item?.weight ?? item?.volume);
+  if (unit && amount > 0) return `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unit}`;
+  if (unit === 'кг' || unit === 'л') return `ціна за 1 ${unit}`;
+  if (unit) return `1 ${unit}`;
+  return undefined;
 }
 
 function normalizeProduct(item: any, availabilityReliable = true): Product {
@@ -310,7 +342,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
     slug: item.slug ? String(item.slug) : undefined,
     available: !availabilityReliable ? null : productAvailabilityValue(item),
     stock: numberValue(item.stock),
-    displayWeight: item.displayWeight ?? item.display_weight ?? item.unit ?? undefined,
+    displayWeight: productDisplayWeight(item),
     company_id: item.companyId ? String(item.companyId) : undefined,
     special_price: specialPrice,
     special_price_count: specialOffer?.count || 0,
@@ -689,16 +721,16 @@ function App() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const openSilpoDestination = (webUrl: string) => {
+  const openSilpoDestination = (webUrl: string, appUrl = SILPO_APP_LINK) => {
     const telegram = (window as any).Telegram?.WebApp;
     const platform = String(telegram?.platform || '').toLowerCase();
     const isMobile = platform.includes('android') || platform === 'ios'
       || /android|iphone|ipad|ipod/i.test(window.navigator.userAgent);
-    openExternalUrl(isMobile ? SILPO_APP_LINK : webUrl);
+    openExternalUrl(isMobile ? appUrl : webUrl);
   };
 
   const openSilpoAccount = () => openSilpoDestination(SILPO_ACCOUNT_URL);
-  const openSilpoBasket = () => openSilpoDestination(SILPO_BASKET_URL);
+  const openSilpoBasket = () => openSilpoDestination(SILPO_BASKET_URL, SILPO_BASKET_APP_LINK);
 
   const openFavorites = () => {
     setActiveTab('favorites');
@@ -1285,7 +1317,7 @@ function App() {
                           </button>
                         </div>
                         {link ? <a className="product-name" href={link} target="_blank" rel="noreferrer">{product.name}</a> : <h3 className="product-name">{product.name}</h3>}
-                        <p className="product-meta">{product.displayWeight || '1 шт'}</p>
+                        {product.displayWeight && <p className="product-meta">{product.displayWeight}</p>}
                         <div className="price-line">
                           <strong>{formatPrice(product.effective_price)}</strong>
                           {product.special_price_count > 1 && <span className="condition-badge">від {product.special_price_count} шт</span>}
@@ -1515,7 +1547,7 @@ function App() {
                               <span className="status-dot" />{product.available === true ? 'Є в магазині' : product.available === null ? 'Уточнимо вдень' : 'Зараз немає'}
                             </span>
                             <strong>{product.name}</strong>
-                            <small>{product.displayWeight || '1 шт'}</small>
+                            {product.displayWeight && <small>{product.displayWeight}</small>}
                             <div className="search-result-price">
                               <b>{formatPrice(product.effective_price)}</b>
                               {product.special_price_count > 1 && <span>від {product.special_price_count} шт</span>}

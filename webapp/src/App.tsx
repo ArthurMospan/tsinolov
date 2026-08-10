@@ -289,27 +289,34 @@ function productDisplayWeight(item: any): string | undefined {
   const direct = [
     item?.displayWeight, item?.display_weight, item?.weightText, item?.weight_text,
     item?.netWeightText, item?.net_weight_text, item?.size, item?.volumeText, item?.volume_text,
+    item?.displayUnit, item?.display_unit,
   ].find(value => typeof value === 'string' && value.trim());
   if (direct) return String(direct).trim();
 
   const rawUnit = item?.unitOfMeasure ?? item?.unit_of_measure ?? item?.measurementUnit
-    ?? item?.measurement_unit ?? item?.priceUnit ?? item?.price_unit ?? item?.unit;
+    ?? item?.measurement_unit ?? item?.measureUnit ?? item?.measure_unit ?? item?.measure
+    ?? item?.priceUnit ?? item?.price_unit ?? item?.baseUnit ?? item?.base_unit ?? item?.uom ?? item?.unit;
   const unitValue = typeof rawUnit === 'object'
-    ? rawUnit?.shortName ?? rawUnit?.short_name ?? rawUnit?.name ?? rawUnit?.label ?? rawUnit?.code
+    ? rawUnit?.shortName ?? rawUnit?.short_name ?? rawUnit?.abbreviation ?? rawUnit?.symbol
+      ?? rawUnit?.name ?? rawUnit?.label ?? rawUnit?.title ?? rawUnit?.text ?? rawUnit?.value ?? rawUnit?.code
     : rawUnit;
-  const normalizedUnit = String(unitValue || '').trim().toLowerCase();
-  const unit = ({
-    kg: 'кг', kilogram: 'кг', kilograms: 'кг', 'кг': 'кг',
-    g: 'г', gr: 'г', gram: 'г', grams: 'г', 'г': 'г',
-    l: 'л', liter: 'л', litre: 'л', 'л': 'л',
-    ml: 'мл', milliliter: 'мл', millilitre: 'мл', 'мл': 'мл',
-    pcs: 'шт', pc: 'шт', piece: 'шт', pieces: 'шт', 'шт': 'шт',
-  } as Record<string, string>)[normalizedUnit];
-  const amount = numberValue(item?.netWeight ?? item?.net_weight ?? item?.packageWeight
-    ?? item?.package_weight ?? item?.weight ?? item?.volume);
+  const unitText = String(unitValue || '').trim();
+  const normalizedUnit = unitText.toLowerCase().replace(/[.\s_-]+/g, '');
+  let unit: string | undefined;
+  if (/^(kg|kilogram|kilograms|кілограм|кілограмів|кг)$/.test(normalizedUnit)) unit = 'кг';
+  else if (/^(g|gr|gram|grams|грам|грамів|г)$/.test(normalizedUnit)) unit = 'г';
+  else if (/^(l|liter|litre|liters|litres|літр|літрів|л)$/.test(normalizedUnit)) unit = 'л';
+  else if (/^(ml|milliliter|millilitre|milliliters|millilitres|мілілітр|мілілітрів|мл)$/.test(normalizedUnit)) unit = 'мл';
+  else if (/^(pcs|pc|piece|pieces|item|unit|од|одиниця|штука|штук|шт)$/.test(normalizedUnit)) unit = 'шт';
+
+  const amount = numberValue(item?.displayWeight ?? item?.display_weight ?? item?.netWeight
+    ?? item?.net_weight ?? item?.packageWeight ?? item?.package_weight ?? item?.weight ?? item?.volume);
   if (unit && amount > 0) return `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unit}`;
   if (unit === 'кг' || unit === 'л') return `ціна за 1 ${unit}`;
   if (unit) return `1 ${unit}`;
+  if (unitText && unitText !== '[object Object]') {
+    return amount > 0 ? `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unitText}` : unitText;
+  }
   return undefined;
 }
 

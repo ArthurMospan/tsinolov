@@ -26,8 +26,10 @@ import {
 } from 'lucide-react';
 
 const API_URL = '';
-const SILPO_LOGO_URL = '/Silpo_outline_logo.svg';
+const SILPO_HEADER_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
+const SILPO_LOADER_LOGO_URL = '/Silpo_outline_logo.svg';
 const SILPO_ACCOUNT_URL = 'https://my.silpo.ua/';
+const SILPO_FAVORITES_URL = 'https://silpo.ua/favorites';
 const SILPO_BASKET_URL = 'https://silpo.ua/basket';
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
@@ -168,13 +170,100 @@ const SETTING_DEFINITIONS: Array<{
 ];
 
 const PRODUCT_CATEGORIES = [
-  'Овочі та фрукти',
-  'Молочні продукти',
+  'Фрукти та овочі',
   'Мʼясо',
+  'Риба',
+  'Ковбаси та делікатеси',
   'Сири',
-  'Напої',
+  'Хліб та випічка',
+  'Готові страви',
+  'Молочні продукти та яйця',
+  'Власні марки',
+  'Лавка Традицій',
+  'Аптечка здоровʼя',
+  'БАДи',
+  'Здорове харчування',
+  'Бакалія та консерви',
+  'Соуси та спеції',
   'Солодощі',
+  'Снеки та чипси',
+  'Кава та чай',
+  'Напої',
+  'Заморожені продукти',
+  'Алкоголь',
+  'Сигарети та стіки',
+  'Квіти та сад',
+  'Для дому',
+  'Гігієна та краса',
+  'Дитячі товари',
+  'Для тварин',
 ];
+
+function SwipeHandle({ onClose }: { onClose: () => void }) {
+  const startY = useRef<number | null>(null);
+  const distance = useRef(0);
+
+  const sheetFor = (target: HTMLDivElement): HTMLElement | null =>
+    target.closest('[data-swipe-sheet]');
+
+  const resetSheet = (sheet: HTMLElement) => {
+    sheet.style.transition = 'transform 180ms cubic-bezier(.2,.8,.2,1)';
+    sheet.style.transform = 'translate3d(0, 0, 0)';
+    window.setTimeout(() => {
+      sheet.style.removeProperty('transition');
+      sheet.style.removeProperty('transform');
+      sheet.style.removeProperty('will-change');
+    }, 180);
+  };
+
+  const finishSwipe = (target: HTMLDivElement) => {
+    const sheet = sheetFor(target);
+    const shouldClose = distance.current >= 72;
+    startY.current = null;
+    distance.current = 0;
+    if (!sheet) return;
+
+    if (!shouldClose) {
+      resetSheet(sheet);
+      return;
+    }
+
+    sheet.style.transition = 'transform 180ms cubic-bezier(.4,0,1,1)';
+    sheet.style.transform = 'translate3d(0, 100%, 0)';
+    window.setTimeout(onClose, 180);
+  };
+
+  return (
+    <div
+      className="sheet-handle"
+      aria-hidden="true"
+      onTouchStart={event => {
+        startY.current = event.touches[0]?.clientY ?? null;
+        distance.current = 0;
+        const sheet = sheetFor(event.currentTarget);
+        if (sheet) {
+          sheet.style.animation = 'none';
+          sheet.style.willChange = 'transform';
+        }
+      }}
+      onTouchMove={event => {
+        if (startY.current === null) return;
+        const nextDistance = Math.max(0, (event.touches[0]?.clientY ?? startY.current) - startY.current);
+        distance.current = nextDistance;
+        const sheet = sheetFor(event.currentTarget);
+        if (sheet) sheet.style.transform = `translate3d(0, ${nextDistance}px, 0)`;
+        if (event.cancelable) event.preventDefault();
+      }}
+      onTouchEnd={event => finishSwipe(event.currentTarget)}
+      onTouchCancel={event => {
+        const sheet = sheetFor(event.currentTarget);
+        startY.current = null;
+        distance.current = 0;
+        if (sheet) resetSheet(sheet);
+      }}
+    />
+  );
+}
 
 function numberValue(value: unknown, fallback = 0): number {
   const number = Number(value);
@@ -609,6 +698,7 @@ function App() {
   };
 
   const openSilpoAccount = () => openExternalUrl(SILPO_ACCOUNT_URL);
+  const openSilpoFavorites = () => openExternalUrl(SILPO_FAVORITES_URL);
   const openSilpoBasket = () => openExternalUrl(SILPO_BASKET_URL);
 
   const openFavorites = () => {
@@ -951,7 +1041,7 @@ function App() {
   if (isLoading) {
     return (
       <div className="loading-screen">
-        <span className="loading-logo-wrap"><img src={SILPO_LOGO_URL} alt="Сільпо" /></span>
+        <span className="loading-logo-wrap"><img src={SILPO_LOADER_LOGO_URL} alt="Сільпо" /></span>
         <p>Завантажуємо улюблені товари…</p>
       </div>
     );
@@ -970,7 +1060,7 @@ function App() {
       <header className="app-header">
         <button className="brand-lockup brand-home-button" type="button" onClick={() => void refreshPage()} aria-label="Оновити улюблені товари">
           <div className="brand-mark">
-            <img className="brand-logo" src={SILPO_LOGO_URL} alt="Сільпо" />
+            <img className="brand-logo" src={SILPO_HEADER_LOGO_URL} alt="Сільпо" />
           </div>
           <div>
             <h1>Цінолов</h1>
@@ -1002,7 +1092,7 @@ function App() {
                   <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
                   <div className="profile-menu" role="menu">
                     <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
-                    <button type="button" role="menuitem" onClick={openFavorites}><Heart size={18} /><span>Мої улюблені товари</span></button>
+                    <button type="button" role="menuitem" onClick={openSilpoFavorites}><Heart size={18} /><span>Улюблені товари</span></button>
                     <button type="button" role="menuitem" onClick={openSilpoBasket}><ShoppingCart size={18} /><span>Мій кошик</span></button>
                     <span className="profile-menu-divider" />
                     <button className="profile-menu-danger" type="button" role="menuitem" onClick={() => void logout()}><LogOut size={18} /><span>Вийти</span></button>
@@ -1208,8 +1298,8 @@ function App() {
 
       {productSearchOpen && (
         <div className="modal-backdrop product-search-backdrop" role="presentation" onMouseDown={() => setProductSearchOpen(false)}>
-          <section className="product-search-sheet" role="dialog" aria-modal="true" aria-labelledby="product-search-title" onMouseDown={event => event.stopPropagation()}>
-            <div className="sheet-handle" />
+          <section className="product-search-sheet" data-swipe-sheet role="dialog" aria-modal="true" aria-labelledby="product-search-title" onMouseDown={event => event.stopPropagation()}>
+            <SwipeHandle onClose={() => setProductSearchOpen(false)} />
             <div className="sheet-header">
               <div><p className="section-kicker">СІЛЬПО</p><h2 id="product-search-title">Додати улюблений товар</h2></div>
               <button className="icon-button" type="button" onClick={() => setProductSearchOpen(false)} aria-label="Закрити"><X size={20} /></button>
@@ -1220,7 +1310,7 @@ function App() {
               <input
                 value={productSearch}
                 onChange={event => setProductSearch(event.target.value)}
-                placeholder="Що хочете додати?"
+                placeholder="Пошук товару..."
               />
               {productSearch && <button type="button" onClick={() => setProductSearch('')} aria-label="Очистити пошук"><X size={16} /></button>}
             </label>
@@ -1293,8 +1383,8 @@ function App() {
 
       {storePickerOpen && (
         <div className="modal-backdrop store-picker-backdrop" role="presentation" onMouseDown={() => setStorePickerOpen(false)}>
-          <section className="store-sheet" role="dialog" aria-modal="true" aria-labelledby="store-picker-title" onMouseDown={event => event.stopPropagation()}>
-            <div className="sheet-handle" />
+          <section className="store-sheet" data-swipe-sheet role="dialog" aria-modal="true" aria-labelledby="store-picker-title" onMouseDown={event => event.stopPropagation()}>
+            <SwipeHandle onClose={() => setStorePickerOpen(false)} />
             <div className="sheet-header">
               <div><p className="section-kicker">КОНТЕКСТ ЦІН</p><h2 id="store-picker-title">Вибрати магазин</h2></div>
               <button className="icon-button" type="button" onClick={() => setStorePickerOpen(false)} aria-label="Закрити"><X size={20} /></button>
@@ -1322,8 +1412,8 @@ function App() {
 
       {modalProduct && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setModalProduct(null)}>
-          <section className="target-sheet" role="dialog" aria-modal="true" aria-labelledby="target-title" onMouseDown={event => event.stopPropagation()}>
-            <div className="sheet-handle" />
+          <section className="target-sheet" data-swipe-sheet role="dialog" aria-modal="true" aria-labelledby="target-title" onMouseDown={event => event.stopPropagation()}>
+            <SwipeHandle onClose={() => setModalProduct(null)} />
             <div className="sheet-header"><div><p className="section-kicker">ЦІНОВИЙ КОНТРОЛЬ</p><h2 id="target-title">Бажана ціна</h2></div><button className="icon-button" onClick={() => setModalProduct(null)} aria-label="Закрити"><X size={20} /></button></div>
             <p className="sheet-product">{modalProduct.name}</p>
             <label className="input-label" htmlFor="target-price">Нагадати, коли ціна буде</label>

@@ -80,8 +80,6 @@ app.get('/auth/start', async (req, res) => {
             }),
         });
         const regData = await regResp.json();
-        console.log('[OAuth] Registered client:', regData.client_id);
-
         // Generate PKCE
         const code_verifier = generateCodeVerifier();
         const code_challenge = generateCodeChallenge(code_verifier);
@@ -98,7 +96,6 @@ app.get('/auth/start', async (req, res) => {
         authUrl.searchParams.set('code_challenge_method', 'S256');
         authUrl.searchParams.set('state', state);
 
-        console.log('[OAuth] Auth URL:', authUrl.toString());
         res.redirect(authUrl.toString());
     } catch (err) {
         console.error('[OAuth] Registration failed:', err);
@@ -131,8 +128,6 @@ app.get('/auth/callback', async (req, res) => {
         });
 
         const tokenData = await tokenResp.json();
-        console.log('[OAuth] Got token for tg_id:', oauthState.tg_id);
-
         // Store token
         userTokens.set(oauthState.tg_id, tokenData.access_token);
 

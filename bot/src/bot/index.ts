@@ -8,13 +8,18 @@ dotenv.config();
 
 const token = process.env.BOT_TOKEN?.trim().replace(/^("|')(.*)\1$/, '$2').trim();
 if (!token) {
-    console.error('❌ BOT_TOKEN is missing in .env');
+    console.error('❌ BOT_TOKEN is required');
+    process.exit(1);
+}
+
+const webAppUrl = process.env.WEBAPP_URL?.trim() || '';
+if (!webAppUrl || !/^https:\/\//i.test(webAppUrl)) {
+    console.error('❌ WEBAPP_URL must be a public HTTPS address');
     process.exit(1);
 }
 
 const bot = new Telegraf(token);
 
-// Helper: get or create user
 const getOrCreateUser = async (tgId: number) => {
     let user = await db.prepare('SELECT * FROM users WHERE tg_id = ?').get(tgId);
     if (!user) {
@@ -24,9 +29,6 @@ const getOrCreateUser = async (tgId: number) => {
     await db.prepare('INSERT OR IGNORE INTO user_settings (tg_id) VALUES (?)').run(tgId);
     return user;
 };
-
-// Main Menu Keyboard with WebApp
-const webAppUrl = process.env.WEBAPP_URL || 'https://example.com'; // In dev, use ngrok url
 
 const mainMenu = Markup.keyboard([
     [Markup.button.webApp('📱 Відкрити застосунок', webAppUrl)]
@@ -67,7 +69,6 @@ bot.command('check_now', async (ctx) => {
     await ctx.reply(result);
 });
 
-// Start API Server
 startServer();
 
 let stopping = false;
@@ -77,14 +78,14 @@ let pollingRetryAttempt = 0;
 async function startTelegramPolling(): Promise<void> {
     try {
         await bot.launch();
-    console.log('✅ Telegram Bot started!');
-    bot.telegram.setChatMenuButton({
-        menuButton: {
-            type: 'web_app',
-            text: '📱 Цінолов',
-            web_app: { url: webAppUrl }
-        }
-    }).catch(console.error);
+        console.log('✅ Telegram Bot started!');
+        bot.telegram.setChatMenuButton({
+            menuButton: {
+                type: 'web_app',
+                text: '📱 Цінолов',
+                web_app: { url: webAppUrl }
+            }
+        }).catch(console.error);
     } catch (error) {
         if (stopping) return;
 
@@ -99,7 +100,6 @@ async function startTelegramPolling(): Promise<void> {
 
 void startTelegramPolling();
 
-// Enable graceful stop
 function stopBot(signal: 'SIGINT' | 'SIGTERM') {
     stopping = true;
     if (pollingRetryTimer) clearTimeout(pollingRetryTimer);

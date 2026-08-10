@@ -1,63 +1,94 @@
-# Постійний запуск у мережі
+# Production deployment
 
-Для цього проєкту потрібен не “sleeping” web-хостинг, а невелика VM із постійним диском. У репозиторії вже є production-запуск через Docker Compose:
+У репозиторії є два підтримувані варіанти розгортання: Render з Turso та власний сервер із Docker Compose. Для конкурсного стенду використовується конфігурація `render.yaml`.
 
-- застосунок і Telegram-бот працюють постійно;
-- SQLite лежить у `./data/database.sqlite`, тому не зникає після рестарту контейнера;
-- Caddy автоматично видає HTTPS-сертифікат;
-- перевірки цін запускаються щохвилини та використовують реальний MCP Silpo;
-- у Telegram сповіщення відправляються реальним Bot API.
+## Render + Turso
 
-## Render + Turso без Docker
+### 1. Створити базу
 
-Для Render Free використовуємо зовнішню Turso-базу. Локальну SQLite на Render не використовуємо: файлове сховище Render ephemeral і втрачається після sleep/restart. Render-конфігурація вже лежить у `render.yaml`.
+Створіть базу Turso та збережіть:
 
-У Render створи `New → Blueprint` і вибери репозиторій. Після створення сервісу додай у Environment Variables:
+- `TURSO_DATABASE_URL`;
+- `TURSO_AUTH_TOKEN`.
+
+Схема створюється й доповнюється автоматично під час старту застосунку без видалення наявних даних.
+
+### 2. Створити Telegram-бота
+
+Через `@BotFather` отримайте `BOT_TOKEN`. Після першого deployment задайте Menu Button URL як публічну HTTPS-адресу сервісу.
+
+### 3. Розгорнути Blueprint
+
+Підключіть репозиторій до Render як Blueprint. `render.yaml` уже містить команди збірки, запуску та health check `/health`.
+
+Додайте секретні змінні:
 
 ```env
-BOT_TOKEN=реальний_токен_бота
-WEBAPP_URL=https://твій-сервіс.onrender.com
-TURSO_DATABASE_URL=libsql://твоя-база.turso.io
-TURSO_AUTH_TOKEN=токен_Turso
+BOT_TOKEN=...
+WEBAPP_URL=https://your-service.onrender.com
+TURSO_DATABASE_URL=libsql://...
+TURSO_AUTH_TOKEN=...
 ```
 
-Render сам підставить `PORT`, а застосунок слухає `0.0.0.0`. Docker для цього способу не потрібен.
+`NODE_ENV=production` і `SERVER_HOST=0.0.0.0` задані в `render.yaml`.
 
-Free web service може засинати після 15 хвилин без вхідного трафіку, тому для щохвилинного сканера потрібен зовнішній health ping. Це можна додати після першого успішного deploy.
+Workflow `.github/workflows/keep-render-awake.yml` перевіряє production health endpoint кожні 10 хвилин. Якщо адреса сервісу зміниться, оновіть URL у workflow.
 
-## Постійна VM
+## Docker Compose + Caddy
 
-Створи одну VM у Google Compute Engine класу `e2-micro` у дозволеному free-tier регіоні, встанови Docker і відкрий TCP-порти 80 та 443. Для безкоштовного тарифу потрібен billing account; постав бюджетне сповіщення і не створюй зайві ресурси.
-
-На VM:
+### 1. Підготувати конфігурацію
 
 ```bash
-git clone <URL_РЕПОЗИТОРІЮ> silpo-ai-factory
-cd silpo-ai-factory
 cp .env.production.example .env.production
-nano .env.production
-mkdir -p data
-docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
 ```
 
-У `.env.production` задай:
+Заповніть:
 
 ```env
-BOT_TOKEN=реальний_токен_бота
-WEBAPP_URL=https://твій_хост
-SITE_ADDRESS=твій_хост
+BOT_TOKEN=...
+WEBAPP_URL=https://prices.example.com
+SITE_ADDRESS=prices.example.com
+TURSO_DATABASE_URL=libsql://...
+TURSO_AUTH_TOKEN=...
+DATABASE_PATH=/data/database.sqlite
+NODE_ENV=production
 ```
 
-`SITE_ADDRESS` має бути hostname без `https://`. Якщо окремого домену немає, можна використати hostname виду `<ПУБЛІЧНИЙ_IP>.sslip.io`, який вказує на IP VM. Для стабільності IP краще зарезервувати або підключити власний домен.
+Якщо Turso не задано, SQLite зберігається у змонтованому каталозі `./data`. Для одного production-інстансу цього достатньо; для кількох реплік потрібна Turso.
 
-Після першого запуску відкрий бота, натисни `/start`, пройди авторизацію Silpo і додай товар. Для реальної перевірки умови сповіщення вистав цільову ціну вище поточної: сервер одразу виконає перевірку та надішле повідомлення, якщо Telegram і MCP налаштовані правильно.
-
-## Перевірка після запуску
+### 2. Запустити
 
 ```bash
-docker compose -f docker-compose.production.yml ps
-docker compose -f docker-compose.production.yml logs --tail=100 app
-curl -I https://твій_хост
+docker compose -f docker-compose.production.yml up -d --build
 ```
 
-Не запускай `npm run db:init` на production-базі: це команда для явного скидання локальної схеми. Production-контейнер сам створює відсутні таблиці без видалення даних.
+Caddy автоматично отримує TLS-сертифікат і проксіює запити до Node.js застосунку.
+
+### 3. Перевірити
+
+```bash
+curl --fail https://prices.example.com/health
+docker compose -f docker-compose.production.yml logs -f app
+```
+
+Очікувана відповідь health endpoint:
+
+```json
+{"status":"ok","checkedAt":"..."}
+```
+
+## Оновлення
+
+Render автоматично збирає нову версію після push у підключену гілку. Для Docker:
+
+```bash
+git pull
+docker compose -f docker-compose.production.yml up -d --build
+```
+
+## Безпека
+
+- не комітьте `.env`, токени, локальні БД, логи або tunnel-бінарники;
+- `WEBAPP_URL` має точно збігатися з реальною HTTPS-адресою;
+- API Mini App перевіряє підпис Telegram `initData`;
+- регулярно створюйте backup production-бази.

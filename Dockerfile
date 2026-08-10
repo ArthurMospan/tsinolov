@@ -5,6 +5,7 @@ COPY bot/package*.json ./
 RUN npm ci
 COPY bot/ ./
 RUN npm run build
+RUN npm prune --omit=dev
 
 WORKDIR /app/webapp
 COPY webapp/package*.json ./

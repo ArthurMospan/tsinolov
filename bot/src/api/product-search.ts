@@ -19,7 +19,9 @@ function productArrays(value: any): any[][] {
     const queries = Array.isArray(value.queries)
         ? value.queries.flatMap((query: any) => productArrays(query))
         : [];
-    return [...direct, ...queries];
+    const nested = ['data', 'result', 'catalog', 'page', 'payload', 'response']
+        .flatMap(key => productArrays(value[key]));
+    return [...direct, ...queries, ...nested];
 }
 
 export function productsFromSearchResponse(response: any): any[] {

@@ -30,6 +30,7 @@ const SILPO_HEADER_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple22
 const SILPO_LOADER_LOGO_URL = '/Silpo_outline_logo.svg';
 const SILPO_ACCOUNT_URL = 'https://my.silpo.ua/';
 const SILPO_BASKET_URL = 'https://silpo.ua/basket';
+const SILPO_APP_LINK = 'https://link.silpo.ua/bc29f9776abb';
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 
@@ -602,12 +603,10 @@ function App() {
   useEffect(() => {
     const query = productSearch.trim();
     if (!productSearchOpen || query.length < 2) {
-      if (productResultsMode === 'search') {
-        setProductSearchResults([]);
-        setProductResultsMode(null);
-        setProductResultsOffset(0);
-        setProductResultsHasMore(false);
-      }
+      setProductSearchResults([]);
+      setProductResultsMode(null);
+      setProductResultsOffset(0);
+      setProductResultsHasMore(false);
       setProductSearchLoading(false);
       setProductSearchError(false);
       return;
@@ -646,7 +645,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [productSearchOpen, productSearch, productResultsMode, tgId]);
+  }, [productSearchOpen, productSearch, tgId]);
 
   const connectSilpo = () => {
     if (!tgId) {
@@ -690,8 +689,16 @@ function App() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const openSilpoAccount = () => openExternalUrl(SILPO_ACCOUNT_URL);
-  const openSilpoBasket = () => openExternalUrl(SILPO_BASKET_URL);
+  const openSilpoDestination = (webUrl: string) => {
+    const telegram = (window as any).Telegram?.WebApp;
+    const platform = String(telegram?.platform || '').toLowerCase();
+    const isMobile = platform.includes('android') || platform === 'ios'
+      || /android|iphone|ipad|ipod/i.test(window.navigator.userAgent);
+    openExternalUrl(isMobile ? SILPO_APP_LINK : webUrl);
+  };
+
+  const openSilpoAccount = () => openSilpoDestination(SILPO_ACCOUNT_URL);
+  const openSilpoBasket = () => openSilpoDestination(SILPO_BASKET_URL);
 
   const openFavorites = () => {
     setActiveTab('favorites');
@@ -1191,7 +1198,7 @@ function App() {
                 <>
                   <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
                   <div className="profile-menu" role="menu">
-                    <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
+                    <button type="button" role="menuitem" onClick={openSilpoAccount}><Store size={18} /><span>Перейти в Сільпо</span></button>
                     <button type="button" role="menuitem" onClick={openSilpoBasket}><ShoppingCart size={18} /><span>Мій кошик</span></button>
                     <span className="profile-menu-divider" />
                     <button className="profile-menu-danger" type="button" role="menuitem" onClick={() => void logout()}><LogOut size={18} /><span>Вийти</span></button>

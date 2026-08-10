@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import db from '../db/index';
 import { callMCPTool } from '../api/mcp-direct';
 import { sameStoreContext, type StoreContext } from '../api/store-context';
@@ -10,7 +11,12 @@ import { productPricing } from './product-pricing';
 import { bold, escapeTelegramHtml, italic, productLink } from './telegram-format';
 
 type JsonObject = Record<string, any>;
-export type SendMessage = (chatId: number, text: string, imageUrl?: string) => Promise<unknown>;
+export type SendMessage = (
+    chatId: number,
+    text: string,
+    imageUrl?: string,
+    button?: { text: string; callbackData: string }
+) => Promise<unknown>;
 
 export interface CheckResult {
     checked: boolean;
@@ -128,6 +134,23 @@ function productImageUrl(product: any): string | undefined {
     const value = typeof candidate === 'string' ? candidate : candidate?.url || candidate?.src;
     const normalized = String(value || '').trim();
     return /^https?:\/\//i.test(normalized) ? normalized : undefined;
+}
+
+async function createCartButton(tgId: number, product: any): Promise<{ text: string; callbackData: string } | undefined> {
+    const productId = String(firstValue(product, ['id', 'product_id', 'productId']) || '');
+    const companyId = String(firstValue(product, ['companyId', 'company_id', 'companyID']) || '');
+    if (!productId || !companyId) return undefined;
+
+    const quantity = Math.max(1, Math.floor(Number(firstValue(product, [
+        'specialPriceCount', 'special_price_count', 'specialCount', 'special_count'
+    ]) || 1)));
+    const actionId = randomBytes(8).toString('hex');
+    await db.prepare("DELETE FROM telegram_cart_actions WHERE created_at < datetime('now', '-7 days')").run();
+    await db.prepare(`
+        INSERT INTO telegram_cart_actions (action_id, tg_id, product_id, company_id, quantity)
+        VALUES (?, ?, ?, ?, ?)
+    `).run(actionId, tgId, productId, companyId, quantity);
+    return { text: 'Додати в корзину', callbackData: `cart:${actionId}` };
 }
 
 function hasSameContext(product: any, context: { branchId: string; deliveryType: string }): boolean {
@@ -375,6 +398,7 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             const target = targets.find(item => productIds.includes(String(item.product_id)));
             const targetPrice = Number(target?.target_price || 0);
             const messages: string[] = [];
+            let cartProduct = product;
             const name = String(firstValue(product, ['name', 'title', 'productName']) || productId);
             const linkedName = productLink(name, firstValue(product, ['slug', 'productSlug']));
             const targetReached = Boolean(notificationsEnabled && settings.price_target && targetPrice > 0 && currentPrice <= targetPrice);
@@ -402,6 +426,7 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
                 Number(eventPrevious?.alternative_comparison_price ?? Infinity) > alternative!.comparisonPrice + 0.001
             );
             if (!targetReached && notificationsEnabled && settings.alt_cheaper && eventPrevious && alternative && alternativeIsNew) {
+                if (!messages.length) cartProduct = alternative.product;
                 const comparison = alternative.comparisonLabel
                     ? `\nЦіна за ${escapeTelegramHtml(alternative.comparisonLabel)}: ${bold(`${money(alternative.comparisonPrice)} ₴`)} (цей товар: ${bold(`${money(alternative.currentComparisonPrice)} ₴`)})`
                     : '';
@@ -411,10 +436,23 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             }
 
             if (messages.length) {
+                let buttonProduct = cartProduct;
+                if (currentAvailability(buttonProduct)
+                    && !firstValue(buttonProduct, ['companyId', 'company_id', 'companyID'])) {
+                    try {
+                        buttonProduct = await getDetailedProduct(user.mcp_token, context, buttonProduct) || buttonProduct;
+                    } catch (error) {
+                        console.warn(`[Notifications] Cart metadata failed for ${productId}:`, error);
+                    }
+                }
+                const cartButton = currentAvailability(buttonProduct)
+                    ? await createCartButton(tgId, buttonProduct)
+                    : undefined;
                 await sendMessage(
                     tgId,
                     `${messages.join('\n\n')}${storeMessageSuffix(context)}`,
-                    productImageUrl(product)
+                    productImageUrl(buttonProduct),
+                    cartButton
                 );
                 notifications++;
                 if (target && targetReached) {

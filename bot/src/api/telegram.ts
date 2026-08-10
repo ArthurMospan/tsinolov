@@ -11,7 +11,20 @@ async function callTelegram(method: 'sendMessage' | 'sendPhoto', payload: Record
     if (!response.ok || !data?.ok) throw new Error(`Telegram send failed: ${JSON.stringify(data).slice(0, 500)}`);
 }
 
-export async function sendTelegramMessage(chatId: number, text: string, imageUrl?: string): Promise<void> {
+export interface TelegramInlineButton {
+    text: string;
+    callbackData: string;
+}
+
+export async function sendTelegramMessage(
+    chatId: number,
+    text: string,
+    imageUrl?: string,
+    button?: TelegramInlineButton
+): Promise<void> {
+    const replyMarkup = button
+        ? { inline_keyboard: [[{ text: button.text, callback_data: button.callbackData }]] }
+        : undefined;
     if (imageUrl && /^https?:\/\//i.test(imageUrl)) {
         try {
             await callTelegram('sendPhoto', {
@@ -20,6 +33,7 @@ export async function sendTelegramMessage(chatId: number, text: string, imageUrl
                 caption: text,
                 parse_mode: 'HTML',
                 show_caption_above_media: false,
+                reply_markup: replyMarkup,
             });
             return;
         } catch (error) {
@@ -34,5 +48,6 @@ export async function sendTelegramMessage(chatId: number, text: string, imageUrl
         text,
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },
+        reply_markup: replyMarkup,
     });
 }

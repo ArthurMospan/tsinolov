@@ -91,6 +91,15 @@ const schemaStatements = [
         last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (tg_id, promo_id),
         FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS telegram_cart_actions (
+        action_id TEXT PRIMARY KEY,
+        tg_id INTEGER NOT NULL,
+        product_id TEXT NOT NULL,
+        company_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
     )`
 ];
 

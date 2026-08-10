@@ -9,6 +9,7 @@ import { getStoreContext, listBranches, parseMcpContent, publicStoreLabel } from
 import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites, productAvailability } from '../api/monitoring-favorites';
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
+import { getCatalogCategories, getCatalogProducts } from '../api/product-catalog';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -247,13 +248,62 @@ app.get('/api/favorites', async (req, res) => {
     }
 });
 
-// Search the selected Silpo branch and mark products already present in the
-// account's official Favorites list. At night, searchSilpoProducts retries a
-// daytime slot so a closed delivery window does not make the catalog vanish.
+app.get('/api/catalog/categories', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    if (!tgId) return res.status(400).json({ error: 'Missing tg_id' });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const context = await getUserStoreContext(tgId, token);
+        const categories = await getCatalogCategories(token, context);
+        res.json({ categories, store: context });
+    } catch (error) {
+        console.error('[Catalog] Categories failed:', error);
+        res.status(502).json({ error: 'Category catalog failed' });
+    }
+});
+
+app.get('/api/catalog/products', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    const categoryId = String(req.query.category_id || '').trim();
+    const categorySlug = String(req.query.category_slug || '').trim();
+    const categoryName = String(req.query.category_name || '').trim();
+    const limit = Math.min(40, Math.max(1, Number(req.query.limit) || 30));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    if (!tgId) return res.status(400).json({ error: 'Missing tg_id' });
+    if (!categoryId && !categorySlug) return res.status(400).json({ error: 'Missing category' });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const context = await getUserStoreContext(tgId, token);
+        const [page, favoritesResult] = await Promise.all([
+            getCatalogProducts(token, context, {
+                category: { id: categoryId || categorySlug, slug: categorySlug, name: categoryName },
+                limit,
+                offset,
+            }),
+            getMonitoringFavorites(token, context),
+        ]);
+        res.json({
+            ...page,
+            products: page.products.map(product => ({
+                ...product,
+                in_stock: productAvailability(product),
+                isFavorite: isFavoriteProduct(product, favoritesResult.products),
+            })),
+            store: context,
+        });
+    } catch (error) {
+        console.error('[Catalog] Products failed:', error);
+        res.status(502).json({ error: 'Category products failed' });
+    }
+});
+
 app.get('/api/products/search', async (req, res) => {
     const tgId = Number(req.query.tg_id);
     const query = String(req.query.q || '').trim();
     const limit = Math.min(40, Math.max(1, Number(req.query.limit) || 24));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
     if (!tgId) return res.status(400).json({ error: 'Missing tg_id' });
     if (query.length < 2) return res.json({ products: [] });
     if (query.length > 120) return res.status(400).json({ error: 'Search query is too long' });
@@ -263,7 +313,8 @@ app.get('/api/products/search', async (req, res) => {
     try {
         const context = await getUserStoreContext(tgId, token);
         const [searchResult, favoritesResult] = await Promise.allSettled([
-            searchSilpoProducts(token, context, query, limit),
+            getCatalogProducts(token, context, { query, limit, offset })
+                .catch(() => searchSilpoProducts(token, context, query, limit)),
             getMonitoringFavorites(token, context),
         ]);
         if (searchResult.status === 'rejected') throw searchResult.reason;
@@ -282,6 +333,8 @@ app.get('/api/products/search', async (req, res) => {
             availabilityReliable: search.availabilityReliable,
             availabilityBasis: search.availabilityBasis,
             checkedFor: search.checkedFor,
+            hasMore: 'hasMore' in search ? search.hasMore : false,
+            nextOffset: 'nextOffset' in search ? search.nextOffset : search.products.length,
         });
     } catch (error) {
         console.error('[Products] Search failed:', error);

@@ -29,7 +29,6 @@ const API_URL = '';
 const SILPO_HEADER_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
 const SILPO_LOADER_LOGO_URL = '/Silpo_outline_logo.svg';
 const SILPO_ACCOUNT_URL = 'https://my.silpo.ua/';
-const SILPO_FAVORITES_URL = 'https://silpo.ua/favorites';
 const SILPO_BASKET_URL = 'https://silpo.ua/basket';
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
@@ -135,6 +134,14 @@ interface StoreOptions {
   addresses: StoreOption[];
 }
 
+interface CatalogCategory {
+  id: string;
+  name: string;
+  slug: string;
+  productCount: number | null;
+  children: CatalogCategory[];
+}
+
 const DEFAULT_SETTINGS: Settings = {
   price_drop: false,
   price_target: false,
@@ -167,36 +174,6 @@ const SETTING_DEFINITIONS: Array<{
   { key: 'in_stock', icon: Package, title: 'Повернення в наявність', description: 'Коли недоступний товар знову можна купити' },
   { key: 'alt_cheaper', icon: Search, title: 'Точні дешевші варіанти', description: 'Лише той самий бренд, тип і сумісна фасовка' },
   { key: 'smart_buy', icon: Bell, title: 'Велика знижка', description: 'Коли ціна щонайменше на 20% нижча за звичайну' },
-];
-
-const PRODUCT_CATEGORIES = [
-  'Фрукти та овочі',
-  'Мʼясо',
-  'Риба',
-  'Ковбаси та делікатеси',
-  'Сири',
-  'Хліб та випічка',
-  'Готові страви',
-  'Молочні продукти та яйця',
-  'Власні марки',
-  'Лавка Традицій',
-  'Аптечка здоровʼя',
-  'БАДи',
-  'Здорове харчування',
-  'Бакалія та консерви',
-  'Соуси та спеції',
-  'Солодощі',
-  'Снеки та чипси',
-  'Кава та чай',
-  'Напої',
-  'Заморожені продукти',
-  'Алкоголь',
-  'Сигарети та стіки',
-  'Квіти та сад',
-  'Для дому',
-  'Гігієна та краса',
-  'Дитячі товари',
-  'Для тварин',
 ];
 
 function SwipeHandle({ onClose }: { onClose: () => void }) {
@@ -399,6 +376,13 @@ function App() {
   const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
   const [productSearchLoading, setProductSearchLoading] = useState(false);
   const [productSearchError, setProductSearchError] = useState(false);
+  const [catalogCategories, setCatalogCategories] = useState<CatalogCategory[]>([]);
+  const [catalogPath, setCatalogPath] = useState<CatalogCategory[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState(false);
+  const [productResultsMode, setProductResultsMode] = useState<'search' | 'category' | null>(null);
+  const [productResultsOffset, setProductResultsOffset] = useState(0);
+  const [productResultsHasMore, setProductResultsHasMore] = useState(false);
   const [addingFavoriteId, setAddingFavoriteId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -618,18 +602,25 @@ function App() {
   useEffect(() => {
     const query = productSearch.trim();
     if (!productSearchOpen || query.length < 2) {
-      setProductSearchResults([]);
+      if (productResultsMode === 'search') {
+        setProductSearchResults([]);
+        setProductResultsMode(null);
+        setProductResultsOffset(0);
+        setProductResultsHasMore(false);
+      }
       setProductSearchLoading(false);
       setProductSearchError(false);
       return;
     }
 
     let cancelled = false;
+    setCatalogPath([]);
+    setProductResultsMode('search');
     setProductSearchLoading(true);
     setProductSearchError(false);
     const timeout = window.setTimeout(async () => {
       try {
-        const response = await apiFetch(`${API_URL}/api/products/search?tg_id=${tgId}&q=${encodeURIComponent(query)}&limit=30`);
+        const response = await apiFetch(`${API_URL}/api/products/search?tg_id=${tgId}&q=${encodeURIComponent(query)}&limit=30&offset=0`);
         if (!response.ok) throw new Error('Product search failed');
         const result = await response.json();
         const availabilityReliable = booleanValue(result.availabilityReliable, true);
@@ -637,6 +628,8 @@ function App() {
           setProductSearchResults(Array.isArray(result.products)
             ? result.products.map((item: any) => normalizeProduct(item, availabilityReliable))
             : []);
+          setProductResultsOffset(numberValue(result.nextOffset));
+          setProductResultsHasMore(booleanValue(result.hasMore));
         }
       } catch (error) {
         console.error('[Mini App] Product search failed:', error);
@@ -653,7 +646,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [productSearchOpen, productSearch, tgId]);
+  }, [productSearchOpen, productSearch, productResultsMode, tgId]);
 
   const connectSilpo = () => {
     if (!tgId) {
@@ -698,7 +691,6 @@ function App() {
   };
 
   const openSilpoAccount = () => openExternalUrl(SILPO_ACCOUNT_URL);
-  const openSilpoFavorites = () => openExternalUrl(SILPO_FAVORITES_URL);
   const openSilpoBasket = () => openExternalUrl(SILPO_BASKET_URL);
 
   const openFavorites = () => {
@@ -776,11 +768,116 @@ function App() {
     }
   };
 
-  const openProductSearch = () => {
+  const openProductSearch = async () => {
     setProductSearch('');
     setProductSearchResults([]);
     setProductSearchError(false);
+    setCatalogPath([]);
+    setProductResultsMode(null);
+    setProductResultsOffset(0);
+    setProductResultsHasMore(false);
     setProductSearchOpen(true);
+    if (catalogCategories.length) return;
+
+    setCatalogLoading(true);
+    setCatalogError(false);
+    try {
+      const response = await apiFetch(`${API_URL}/api/catalog/categories?tg_id=${tgId}`);
+      if (!response.ok) throw new Error('Category catalog failed');
+      const result = await response.json();
+      setCatalogCategories(Array.isArray(result.categories) ? result.categories : []);
+    } catch (error) {
+      console.error('[Mini App] Category catalog failed:', error);
+      setCatalogError(true);
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const loadCategoryProducts = async (category: CatalogCategory, append = false) => {
+    const offset = append ? productResultsOffset : 0;
+    setProductResultsMode('category');
+    setProductSearchLoading(true);
+    setProductSearchError(false);
+    try {
+      const params = new URLSearchParams({
+        tg_id: String(tgId),
+        category_id: category.id,
+        category_slug: category.slug,
+        category_name: category.name,
+        limit: '30',
+        offset: String(offset),
+      });
+      const response = await apiFetch(`${API_URL}/api/catalog/products?${params}`);
+      if (!response.ok) throw new Error('Category products failed');
+      const result = await response.json();
+      const availabilityReliable = booleanValue(result.availabilityReliable, true);
+      const products = Array.isArray(result.products)
+        ? result.products.map((item: any) => normalizeProduct(item, availabilityReliable))
+        : [];
+      setProductSearchResults(current => append
+        ? [...current, ...products.filter((product: Product) => !current.some(item => item.product_id === product.product_id))]
+        : products);
+      setProductResultsOffset(numberValue(result.nextOffset));
+      setProductResultsHasMore(booleanValue(result.hasMore));
+    } catch (error) {
+      console.error('[Mini App] Category products failed:', error);
+      if (!append) setProductSearchResults([]);
+      setProductSearchError(true);
+    } finally {
+      setProductSearchLoading(false);
+    }
+  };
+
+  const openCatalogCategory = (category: CatalogCategory) => {
+    setProductSearch('');
+    setProductSearchResults([]);
+    setProductResultsMode(null);
+    setProductResultsOffset(0);
+    setProductResultsHasMore(false);
+    setCatalogPath(path => [...path, category]);
+    if (!category.children.length) void loadCategoryProducts(category);
+  };
+
+  const goBackCatalogCategory = () => {
+    setProductSearchResults([]);
+    setProductResultsMode(null);
+    setProductResultsOffset(0);
+    setProductResultsHasMore(false);
+    setCatalogPath(path => path.slice(0, -1));
+  };
+
+  const loadMoreProducts = async () => {
+    if (productSearchLoading || !productResultsHasMore) return;
+    if (productResultsMode === 'category') {
+      const category = catalogPath[catalogPath.length - 1];
+      if (category) await loadCategoryProducts(category, true);
+      return;
+    }
+
+    const query = productSearch.trim();
+    if (productResultsMode !== 'search' || query.length < 2) return;
+    setProductSearchLoading(true);
+    try {
+      const response = await apiFetch(`${API_URL}/api/products/search?tg_id=${tgId}&q=${encodeURIComponent(query)}&limit=30&offset=${productResultsOffset}`);
+      if (!response.ok) throw new Error('More search products failed');
+      const result = await response.json();
+      const availabilityReliable = booleanValue(result.availabilityReliable, true);
+      const products = Array.isArray(result.products)
+        ? result.products.map((item: any) => normalizeProduct(item, availabilityReliable))
+        : [];
+      setProductSearchResults(current => [
+        ...current,
+        ...products.filter((product: Product) => !current.some(item => item.product_id === product.product_id)),
+      ]);
+      setProductResultsOffset(numberValue(result.nextOffset));
+      setProductResultsHasMore(booleanValue(result.hasMore));
+    } catch (error) {
+      console.error('[Mini App] More search products failed:', error);
+      showToast('Не вдалося завантажити більше товарів');
+    } finally {
+      setProductSearchLoading(false);
+    }
   };
 
   const refreshFavorites = async (expectedProductId?: string): Promise<boolean> => {
@@ -1038,11 +1135,14 @@ function App() {
     setTargetDraft(product.target_price > 0 ? String(product.target_price) : '');
   };
 
+  const activeCatalogCategory = catalogPath[catalogPath.length - 1];
+  const visibleCatalogCategories = activeCatalogCategory?.children || catalogCategories;
+
   if (isLoading) {
     return (
       <div className="loading-screen">
         <span className="loading-logo-wrap"><img src={SILPO_LOADER_LOGO_URL} alt="Сільпо" /></span>
-        <p>Завантажуємо улюблені товари…</p>
+        <p>Завантажуємо улюблені товари<span className="loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></p>
       </div>
     );
   }
@@ -1092,7 +1192,6 @@ function App() {
                   <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
                   <div className="profile-menu" role="menu">
                     <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
-                    <button type="button" role="menuitem" onClick={openSilpoFavorites}><Heart size={18} /><span>Улюблені товари</span></button>
                     <button type="button" role="menuitem" onClick={openSilpoBasket}><ShoppingCart size={18} /><span>Мій кошик</span></button>
                     <span className="profile-menu-divider" />
                     <button className="profile-menu-danger" type="button" role="menuitem" onClick={() => void logout()}><LogOut size={18} /><span>Вийти</span></button>
@@ -1101,7 +1200,7 @@ function App() {
               )}
             </div>
           </div>
-        ) : <span className="header-status">Mini App</span>}
+        ) : null}
       </header>
 
       {isAuthenticated && userProfile && (
@@ -1128,14 +1227,15 @@ function App() {
       </div>
 
       {!isAuthenticated && (
-        <button className="connect-card" onClick={connectSilpo}>
-          <span className="connect-icon"><Link2 size={20} /></span>
-          <span className="connect-copy"><strong>{tgId ? 'Підключити акаунт Сільпо' : 'Відкрийте через Telegram'}</strong><small>{tgId ? 'Щоб бачити реальні улюблені товари та ціни' : 'Ідентифікатор Telegram не знайдено'}</small></span>
-          <ChevronRight size={20} />
-        </button>
+        <main className="connect-screen">
+          <button className="connect-card" onClick={connectSilpo}>
+            <span className="connect-icon"><Link2 size={22} /></span>
+            <span className="connect-copy"><strong>{tgId ? 'Підключити акаунт Сільпо' : 'Відкрийте через Telegram'}</strong><small>{tgId ? 'Щоб бачити улюблені товари та актуальні ціни' : 'Ідентифікатор Telegram не знайдено'}</small></span>
+          </button>
+        </main>
       )}
 
-      <main className="main-content">
+      {isAuthenticated && <main className="main-content">
         {activeTab === 'favorites' ? (
           <section className="page-section">
             <div className="section-heading">
@@ -1147,9 +1247,9 @@ function App() {
             </div>
 
             {isAuthenticated && (
-              <button className="product-search-launcher" type="button" onClick={openProductSearch}>
+              <button className="product-search-launcher" type="button" onClick={() => void openProductSearch()}>
                 <Search size={20} />
-                <span>Додати улюблений товар</span>
+                <span>Пошук товару...</span>
                 <span className="product-search-launcher-hint">Знайти й додати</span>
               </button>
             )}
@@ -1243,7 +1343,7 @@ function App() {
             <div className="info-card"><ShieldCheck size={18} /><p><strong>Захист від хибних сповіщень.</strong> Наявність підтверджується двома перевірками, дрібні коливання ціни ігноруються, а після зміни магазину порівняння починається заново. Бажана ціна перевіряється одразу.</p></div>
           </section>
         )}
-      </main>
+      </main>}
 
       {isAuthenticated && userProfile && !settings.onboarding_completed && (
         <div className="onboarding-backdrop">
@@ -1316,18 +1416,71 @@ function App() {
             </label>
 
             <div className="product-search-scroll">
-              {productSearch.trim().length < 2 ? (
-                <div className="product-search-empty">
-                  <span><Search size={27} /></span>
-                  <strong>Оберіть категорію або знайдіть товар</strong>
-                  <p>Покажемо асортимент і актуальні ціни вибраного магазину.</p>
-                  <div className="product-category-grid">
-                    {PRODUCT_CATEGORIES.map(category => (
-                      <button type="button" key={category} onClick={() => setProductSearch(category)}>{category}</button>
-                    ))}
+              {catalogPath.length > 0 && productSearch.trim().length === 0 && (
+                <div className="catalog-navigation">
+                  <button type="button" onClick={goBackCatalogCategory} aria-label="Повернутися до попередньої категорії">
+                    <ArrowLeft size={18} />
+                  </button>
+                  <div>
+                    <small>{catalogPath.slice(0, -1).map(category => category.name).join(' · ') || 'Каталог'}</small>
+                    <strong>{activeCatalogCategory?.name}</strong>
                   </div>
                 </div>
-              ) : productSearchLoading ? (
+              )}
+
+              {productResultsMode === null && productSearch.trim().length === 0 ? (
+                catalogLoading ? (
+                  <div className="product-search-state"><span className="loading-spinner" />Завантажуємо каталог Сільпо…</div>
+                ) : catalogError ? (
+                  <div className="product-search-empty error">
+                    <strong>Категорії тимчасово недоступні</strong>
+                    <p>Пошук за назвою продовжує працювати.</p>
+                  </div>
+                ) : (
+                  <div className="catalog-browser">
+                    {!activeCatalogCategory && (
+                      <div className="catalog-intro">
+                        <strong>Категорії товарів</strong>
+                        <p>Обирайте категорію та підкатегорію або скористайтеся пошуком.</p>
+                      </div>
+                    )}
+                    {activeCatalogCategory && (
+                      <button className="catalog-show-all" type="button" onClick={() => void loadCategoryProducts(activeCatalogCategory)}>
+                        <span>
+                          <strong>Усі товари категорії</strong>
+                          {activeCatalogCategory.productCount !== null && <small>{activeCatalogCategory.productCount} товарів</small>}
+                        </span>
+                        <ChevronRight size={18} />
+                      </button>
+                    )}
+                    <div className="catalog-category-list">
+                      {visibleCatalogCategories.map(category => (
+                        <button type="button" key={category.id} onClick={() => openCatalogCategory(category)}>
+                          <span>
+                            <strong>{category.name}</strong>
+                            <small>{category.children.length > 0
+                              ? `${category.children.length} підкатегорій`
+                              : category.productCount !== null ? `${category.productCount} товарів` : 'Переглянути товари'}</small>
+                          </span>
+                          <ChevronRight size={18} />
+                        </button>
+                      ))}
+                    </div>
+                    {visibleCatalogCategories.length === 0 && (
+                      <div className="product-search-empty">
+                        <strong>У цій категорії немає підкатегорій</strong>
+                        <p>Натисніть «Усі товари категорії», щоб переглянути асортимент.</p>
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : productResultsMode === null ? (
+                <div className="product-search-empty compact">
+                  <span><Search size={25} /></span>
+                  <strong>Введіть ще один символ</strong>
+                  <p>Пошук починається від двох символів.</p>
+                </div>
+              ) : productSearchLoading && productSearchResults.length === 0 ? (
                 <div className="product-search-state"><span className="loading-spinner" />Шукаємо в каталозі Сільпо…</div>
               ) : productSearchError ? (
                 <div className="product-search-empty error">
@@ -1340,41 +1493,48 @@ function App() {
                   <p>Спробуйте коротшу назву, бренд або точний артикул товару.</p>
                 </div>
               ) : (
-                <div className="search-results-list">
-                  {productSearchResults.map(product => {
-                    const isFavorite = product.is_favorite || favorites.some(item =>
-                      item.product_id === product.product_id
-                      || (item.external_product_id && item.external_product_id === product.external_product_id));
-                    const isAdding = addingFavoriteId === product.product_id;
-                    return (
-                      <article className="search-result-card" key={product.product_id}>
-                        <div className="search-result-image"><ProductImage product={product} /></div>
-                        <div className="search-result-copy">
-                          <span className={product.available === true ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
-                            <span className="status-dot" />{product.available === true ? 'Є в магазині' : product.available === null ? 'Уточнимо вдень' : 'Зараз немає'}
-                          </span>
-                          <strong>{product.name}</strong>
-                          <small>{product.displayWeight || '1 шт'}</small>
-                          <div className="search-result-price">
-                            <b>{formatPrice(product.effective_price)}</b>
-                            {product.special_price_count > 1 && <span>від {product.special_price_count} шт</span>}
-                            {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
+                <>
+                  <div className="search-results-list">
+                    {productSearchResults.map(product => {
+                      const isFavorite = product.is_favorite || favorites.some(item =>
+                        item.product_id === product.product_id
+                        || (item.external_product_id && item.external_product_id === product.external_product_id));
+                      const isAdding = addingFavoriteId === product.product_id;
+                      return (
+                        <article className="search-result-card" key={product.product_id}>
+                          <div className="search-result-image"><ProductImage product={product} /></div>
+                          <div className="search-result-copy">
+                            <span className={product.available === true ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
+                              <span className="status-dot" />{product.available === true ? 'Є в магазині' : product.available === null ? 'Уточнимо вдень' : 'Зараз немає'}
+                            </span>
+                            <strong>{product.name}</strong>
+                            <small>{product.displayWeight || '1 шт'}</small>
+                            <div className="search-result-price">
+                              <b>{formatPrice(product.effective_price)}</b>
+                              {product.special_price_count > 1 && <span>від {product.special_price_count} шт</span>}
+                              {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
+                            </div>
                           </div>
-                        </div>
-                        <button
-                          className={isFavorite ? 'search-add-button added' : 'search-add-button'}
-                          type="button"
-                          disabled={Boolean(isFavorite || isAdding)}
-                          onClick={() => void addToFavorites(product)}
-                          aria-label={isFavorite ? 'Уже в Улюблених' : 'Додати в Улюблені'}
-                        >
-                          {isAdding ? <span className="button-spinner" /> : isFavorite ? <Check size={18} /> : <Plus size={19} />}
-                          <span>{isFavorite ? 'Додано' : 'Додати'}</span>
-                        </button>
-                      </article>
-                    );
-                  })}
-                </div>
+                          <button
+                            className={isFavorite ? 'search-add-button added' : 'search-add-button'}
+                            type="button"
+                            disabled={Boolean(isFavorite || isAdding)}
+                            onClick={() => void addToFavorites(product)}
+                            aria-label={isFavorite ? 'Уже в Улюблених' : 'Додати в Улюблені'}
+                          >
+                            {isAdding ? <span className="button-spinner" /> : isFavorite ? <Check size={18} /> : <Plus size={19} />}
+                            <span>{isFavorite ? 'Додано' : 'Додати'}</span>
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  {productResultsHasMore && (
+                    <button className="search-load-more" type="button" disabled={productSearchLoading} onClick={() => void loadMoreProducts()}>
+                      {productSearchLoading ? <><span className="loading-spinner" />Завантажуємо…</> : 'Показати ще товари'}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </section>

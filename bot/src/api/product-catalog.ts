@@ -79,7 +79,7 @@ export function categoriesFromResponse(response: any): CatalogCategory[] {
         byId.set(node.id, merged);
         return merged;
     };
-    nodes.forEach(collect);
+    nodes.forEach(node => collect(node));
 
     for (const node of byId.values()) {
         if (!node.parentId) continue;

@@ -9,6 +9,7 @@ export interface CatalogCategory {
     slug: string;
     productCount: number | null;
     children: CatalogCategory[];
+    parentId?: string;
 }
 
 export interface CatalogProductPage {
@@ -39,7 +40,7 @@ function categoryChildren(value: any): any[] {
 function categoryNode(value: any): CatalogCategory | null {
     if (!value || typeof value !== 'object') return null;
     const name = String(firstValue(value, ['name', 'title', 'label', 'displayName']) || '').trim();
-    const id = String(firstValue(value, ['id', 'categoryId', 'category_id', 'code', 'slug']) || '').trim();
+    const id = String(firstValue(value, ['id', 'categoryId', 'category_id', 'externalId', 'external_id', 'code', 'slug']) || '').trim();
     if (!name || !id) return null;
     const count = Number(firstValue(value, ['productCount', 'productsCount', 'products_count', 'count']));
     return {
@@ -48,6 +49,7 @@ function categoryNode(value: any): CatalogCategory | null {
         slug: String(firstValue(value, ['slug', 'categorySlug', 'category_slug']) || '').trim(),
         productCount: Number.isFinite(count) ? count : null,
         children: categoryChildren(value).map(categoryNode).filter(Boolean) as CatalogCategory[],
+        parentId: String(firstValue(value, ['parentId', 'parent_id', 'parentCategoryId', 'parent_category_id']) || '').trim() || undefined,
     };
 }
 
@@ -66,12 +68,34 @@ function categoryArray(root: any): any[] {
 
 export function categoriesFromResponse(response: any): CatalogCategory[] {
     const nodes = parseMcpContent(response).flatMap(categoryArray).map(categoryNode).filter(Boolean) as CatalogCategory[];
-    const seen = new Set<string>();
-    return nodes.filter(node => {
-        if (seen.has(node.id)) return false;
-        seen.add(node.id);
-        return true;
-    });
+    const byId = new Map<string, CatalogCategory>();
+    const collect = (node: CatalogCategory, inheritedParentId?: string): CatalogCategory => {
+        const parentId = node.parentId || inheritedParentId;
+        const children = node.children.map(child => collect(child, node.id));
+        const existing = byId.get(node.id);
+        const merged = existing
+            ? { ...existing, ...node, parentId, children: [...existing.children, ...children] }
+            : { ...node, parentId, children };
+        byId.set(node.id, merged);
+        return merged;
+    };
+    nodes.forEach(collect);
+
+    for (const node of byId.values()) {
+        if (!node.parentId) continue;
+        const parent = byId.get(node.parentId);
+        if (parent && !parent.children.some(child => child.id === node.id)) parent.children.push(node);
+    }
+
+    const collator = new Intl.Collator('uk', { sensitivity: 'base' });
+    const sortTree = (items: CatalogCategory[]): CatalogCategory[] => [...new Map(items.map(item => [item.id, item])).values()]
+        .map(item => ({ ...item, children: sortTree(item.children) }))
+        .sort((left, right) => collator.compare(left.name, right.name));
+    let roots = [...byId.values()].filter(node => !node.parentId || !byId.has(node.parentId));
+    if (roots.length === 1 && roots[0].children.length > 0 && roots[0].productCount === null) {
+        roots = roots[0].children;
+    }
+    return sortTree(roots);
 }
 
 function propertyName(properties: SchemaProperties, candidates: string[]): string | undefined {
@@ -95,6 +119,7 @@ function categoryValue(key: string, schema: any, category: { id: string; slug?: 
         : normalizedKey.includes('name')
             ? category.name || category.id
             : category.id || category.slug || category.name;
+    if (schema?.type === 'object') return { id: category.id, slug: category.slug, name: category.name };
     return schema?.type === 'array' ? [value] : value;
 }
 
@@ -121,11 +146,12 @@ export function buildCatalogArgs(
     if (options.limit && options.offset !== undefined) {
         setAccepted(args, properties, ['page'], Math.floor(options.offset / options.limit) + 1);
     }
-    setAccepted(args, properties, ['query', 'search', 'searchText', 'search_text', 'text'], options.query);
+    setAccepted(args, properties, ['query', 'search', 'searchQuery', 'search_query', 'searchText', 'search_text', 'text'], options.query);
 
     if (options.category) {
         const key = propertyName(properties, [
-            'categoryId', 'category_id', 'categoryIds', 'category_ids', 'categorySlug', 'category_slug', 'category'
+            'categoryId', 'category_id', 'categoryIds', 'category_ids', 'categorySlug', 'category_slug',
+            'categorySlugs', 'category_slugs', 'categories', 'category'
         ]);
         if (key) args[key] = categoryValue(key, properties[key], options.category);
     }

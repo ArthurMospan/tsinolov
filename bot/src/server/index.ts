@@ -276,7 +276,7 @@ app.get('/api/catalog/products', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     try {
         const context = await getUserStoreContext(tgId, token);
-        const [page, favoritesResult] = await Promise.all([
+        const [catalogPage, favoritesResult] = await Promise.all([
             getCatalogProducts(token, context, {
                 category: { id: categoryId || categorySlug, slug: categorySlug, name: categoryName },
                 limit,
@@ -284,6 +284,12 @@ app.get('/api/catalog/products', async (req, res) => {
             }),
             getMonitoringFavorites(token, context),
         ]);
+        const fallback = catalogPage.products.length === 0 && offset === 0 && categoryName
+            ? await searchSilpoProducts(token, context, categoryName, limit)
+            : null;
+        const page = fallback
+            ? { ...fallback, hasMore: false, nextOffset: fallback.products.length }
+            : catalogPage;
         res.json({
             ...page,
             products: page.products.map(product => ({

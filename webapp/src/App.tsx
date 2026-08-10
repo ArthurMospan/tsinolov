@@ -92,6 +92,7 @@ interface Product {
   target_price: number;
   slug?: string;
   available: boolean | null;
+  availability_note?: string;
   stock: number;
   displayWeight?: string;
   company_id?: string;
@@ -254,7 +255,62 @@ function booleanValue(value: unknown, fallback = false): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function nestedFieldValues(root: any, fieldNames: string[], maxDepth = 5): unknown[] {
+  const names = new Set(fieldNames.map(name => name.toLowerCase()));
+  const values: unknown[] = [];
+  const visited = new Set<any>();
+  const visit = (value: any, depth: number) => {
+    if (!value || typeof value !== 'object' || depth > maxDepth || visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(item => visit(item, depth + 1));
+      return;
+    }
+    Object.entries(value).forEach(([key, nested]) => {
+      if (names.has(key.toLowerCase()) && nested !== undefined && nested !== null) values.push(nested);
+      if (nested && typeof nested === 'object') visit(nested, depth + 1);
+    });
+  };
+  visit(root, 0);
+  return values;
+}
+
+function scalarText(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (!value || typeof value !== 'object') return '';
+  const object = value as Record<string, unknown>;
+  for (const key of ['shortName', 'short_name', 'abbreviation', 'symbol', 'name', 'label', 'title', 'text', 'value', 'code']) {
+    if (typeof object[key] === 'string' || typeof object[key] === 'number') return String(object[key]).trim();
+  }
+  return '';
+}
+
+function productAvailabilityNote(item: any): string | undefined {
+  const statuses = nestedFieldValues(item, [
+    'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
+    'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
+  ]).map(scalarText).join(' ').toLowerCase();
+  if (/очіку|expected|awaiting|coming[_\s-]?soon/.test(statuses)) return 'Очікується';
+
+  const onlineValues = nestedFieldValues(item, [
+    'onlineOnly', 'online_only', 'isOnlineOnly', 'is_online_only', 'onlyOnline', 'only_online',
+    'priceOnlyOnline', 'price_only_online', 'isOnlinePrice', 'is_online_price', 'priceType', 'price_type',
+  ]);
+  const onlineOnly = onlineValues.some(value => booleanValue(value)
+    || /online|онлайн/.test(scalarText(value).toLowerCase()));
+  if (onlineOnly || /only[_\s-]?online|лише онлайн|тільки онлайн/.test(statuses)) return 'Лише онлайн';
+  return undefined;
+}
+
 function productAvailabilityValue(item: any): boolean | null {
+  const note = productAvailabilityNote(item);
+  if (note === 'Очікується') return false;
+  if (note === 'Лише онлайн') return null;
+  const statuses = nestedFieldValues(item, [
+    'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
+    'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
+  ]).map(scalarText).join(' ').toLowerCase();
+  if (/out[_\s-]?of[_\s-]?stock|unavailable|not[_\s-]?available|sold[_\s-]?out|немає|відсут/.test(statuses)) return false;
   for (const field of ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']) {
     if (booleanValue(item?.[field])) return false;
   }
@@ -286,23 +342,25 @@ function productAvailabilityValue(item: any): boolean | null {
 }
 
 function productDisplayWeight(item: any): string | undefined {
-  const direct = [
-    item?.displayWeight, item?.display_weight, item?.weightText, item?.weight_text,
-    item?.netWeightText, item?.net_weight_text, item?.size, item?.volumeText, item?.volume_text,
-    item?.displayUnit, item?.display_unit,
-    item?.netWeight, item?.net_weight, item?.packageWeight, item?.package_weight, item?.weight,
-  ].find(value => typeof value === 'string' && value.trim());
-  if (direct) return String(direct).trim();
+  const direct = nestedFieldValues(item, [
+    'displayWeight', 'display_weight', 'weightText', 'weight_text', 'netWeightText', 'net_weight_text',
+    'volumeText', 'volume_text', 'displayUnit', 'display_unit', 'sellingUnitText', 'selling_unit_text',
+  ]).map(scalarText).find(Boolean);
+  if (direct) return direct;
 
-  const rawUnit = item?.unitOfMeasure ?? item?.unit_of_measure ?? item?.measurementUnit
-    ?? item?.measurement_unit ?? item?.measureUnit ?? item?.measure_unit ?? item?.measure
-    ?? item?.unitName ?? item?.unit_name ?? item?.priceUnit ?? item?.price_unit
-    ?? item?.baseUnit ?? item?.base_unit ?? item?.uom ?? item?.unit;
-  const unitValue = typeof rawUnit === 'object'
-    ? rawUnit?.shortName ?? rawUnit?.short_name ?? rawUnit?.abbreviation ?? rawUnit?.symbol
-      ?? rawUnit?.name ?? rawUnit?.label ?? rawUnit?.title ?? rawUnit?.text ?? rawUnit?.value ?? rawUnit?.code
-    : rawUnit;
-  const unitText = String(unitValue || '').trim();
+  const attributeMeasurement = nestedFieldValues(item, ['attributes', 'characteristics', 'properties'])
+    .flatMap(value => Array.isArray(value) ? value : [value])
+    .map((attribute: any) => ({
+      label: scalarText(attribute?.name ?? attribute?.label ?? attribute?.title).toLowerCase(),
+      value: scalarText(attribute?.value ?? attribute?.text ?? attribute?.displayValue ?? attribute?.display_value),
+    }))
+    .find(attribute => /вага|маса|об.?єм|фасов|кількість|одиниц|weight|volume|unit|pack/.test(attribute.label) && attribute.value);
+  if (attributeMeasurement) return attributeMeasurement.value;
+
+  const unitText = nestedFieldValues(item, [
+    'unitOfMeasure', 'unit_of_measure', 'measurementUnit', 'measurement_unit', 'measureUnit', 'measure_unit',
+    'priceUnit', 'price_unit', 'baseUnit', 'base_unit', 'sellingUnit', 'selling_unit', 'unitName', 'unit_name', 'uom', 'unit',
+  ]).map(scalarText).find(Boolean) || '';
   const normalizedUnit = unitText.toLowerCase().replace(/[.\s_-]+/g, '');
   let unit: string | undefined;
   if (/^(kg|kilogram|kilograms|кілограм|кілограмів|кг)$/.test(normalizedUnit)) unit = 'кг';
@@ -311,14 +369,20 @@ function productDisplayWeight(item: any): string | undefined {
   else if (/^(ml|milliliter|millilitre|milliliters|millilitres|мілілітр|мілілітрів|мл)$/.test(normalizedUnit)) unit = 'мл';
   else if (/^(pcs|pc|piece|pieces|item|unit|од|одиниця|штука|штук|шт)$/.test(normalizedUnit)) unit = 'шт';
 
-  const amount = numberValue(item?.displayWeight ?? item?.display_weight ?? item?.netWeight
-    ?? item?.net_weight ?? item?.packageWeight ?? item?.package_weight ?? item?.weight ?? item?.volume);
+  const amountValue = nestedFieldValues(item, [
+    'netWeight', 'net_weight', 'packageWeight', 'package_weight', 'weight', 'volume', 'amount', 'quantity',
+  ]).find(value => Number.isFinite(Number(value)) && Number(value) > 0);
+  const amount = numberValue(amountValue);
   if (unit && amount > 0) return `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unit}`;
   if (unit === 'кг' || unit === 'л') return `ціна за 1 ${unit}`;
   if (unit) return `1 ${unit}`;
   if (unitText && unitText !== '[object Object]') {
     return amount > 0 ? `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unitText}` : unitText;
   }
+  const productName = String(item?.title ?? item?.name ?? item?.productName ?? '').trim();
+  const nameMeasurement = productName.match(/(?:^|\s)(\d+(?:[.,]\d+)?)\s*(кг|г|л|мл|шт)\b/i);
+  if (nameMeasurement) return `${nameMeasurement[1].replace('.', ',')} ${nameMeasurement[2].toLowerCase()}`;
+  if (/вагов|на вагу|weight product/i.test(productName)) return 'ціна за 1 кг';
   return undefined;
 }
 
@@ -337,6 +401,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
   const specialPrice = specialOffer?.price || 0;
   const effectivePrice = specialPrice || currentPrice;
   const referencePrice = oldPrice > effectivePrice ? oldPrice : specialPrice ? currentPrice : currentPrice;
+  const availabilityNote = productAvailabilityNote(item);
 
   return {
     product_id: id,
@@ -350,6 +415,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
     target_price: numberValue(item.target_price ?? item.targetPrice),
     slug: item.slug ? String(item.slug) : undefined,
     available: !availabilityReliable ? null : productAvailabilityValue(item),
+    availability_note: availabilityNote,
     stock: numberValue(item.stock),
     displayWeight: productDisplayWeight(item),
     company_id: item.companyId ? String(item.companyId) : undefined,
@@ -1316,10 +1382,10 @@ function App() {
                       </div>
                       <div className="product-details">
                         <div className="product-topline">
-                          <span className={product.available === true ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
-                            <span className="status-dot" />{product.available === true
+                          <span className={product.available === true && !product.availability_note ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
+                            <span className="status-dot" />{product.availability_note || (product.available === true
                               ? 'Є у вибраному магазині'
-                              : product.available === null ? 'Перевіримо вдень' : 'Немає у вибраному магазині'}
+                              : product.available === null ? 'Наявність уточнюємо' : 'Немає у вибраному магазині')}
                           </span>
                           <button className="icon-button tiny-icon" onClick={() => void removeFromFavorites(product)} disabled={isBusy} aria-label="Видалити з Улюблених">
                             <Heart size={18} fill="currentColor" />
@@ -1552,8 +1618,8 @@ function App() {
                         <article className="search-result-card" key={product.product_id}>
                           <div className="search-result-image"><ProductImage product={product} /></div>
                           <div className="search-result-copy">
-                            <span className={product.available === true ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
-                              <span className="status-dot" />{product.available === true ? 'Є в магазині' : product.available === null ? 'Уточнимо вдень' : 'Зараз немає'}
+                            <span className={product.available === true && !product.availability_note ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
+                              <span className="status-dot" />{product.availability_note || (product.available === true ? 'Є в магазині' : product.available === null ? 'Наявність уточнюємо' : 'Зараз немає')}
                             </span>
                             <strong>{product.name}</strong>
                             {product.displayWeight && <small>{product.displayWeight}</small>}

@@ -25,26 +25,26 @@ function looksLikeProduct(value: any): boolean {
     return hasIdentity && hasProductData;
 }
 
-function findProduct(value: any, visited = new Set<any>()): any | null {
-    if (!value || typeof value !== 'object' || visited.has(value)) return null;
+function collectProducts(value: any, products: any[] = [], visited = new Set<any>()): any[] {
+    if (!value || typeof value !== 'object' || visited.has(value)) return products;
     visited.add(value);
-    if (looksLikeProduct(value)) return value;
+    if (looksLikeProduct(value)) products.push(value);
     if (Array.isArray(value)) {
-        for (const item of value) {
-            const product = findProduct(item, visited);
-            if (product) return product;
-        }
-        return null;
+        value.forEach(item => collectProducts(item, products, visited));
+        return products;
     }
-    for (const key of ['product', 'item', 'data', 'result', 'details', 'response']) {
-        const product = findProduct(value[key], visited);
-        if (product) return product;
-    }
-    for (const nested of Object.values(value)) {
-        const product = findProduct(nested, visited);
-        if (product) return product;
-    }
-    return null;
+    Object.values(value).forEach(nested => collectProducts(nested, products, visited));
+    return products;
+}
+
+function productScore(product: any, expectedSlug: string): number {
+    const slug = productSlug(product);
+    let score = slug === expectedSlug ? 100 : slug ? 5 : 0;
+    if (firstValue(product, ['displayWeight', 'display_weight', 'weightText', 'unit', 'unitName', 'unitOfMeasure'])) score += 30;
+    if (Array.isArray(product?.attributes) || Array.isArray(product?.characteristics)) score += 20;
+    if (firstValue(product, ['stock', 'inStock', 'availabilityStatus', 'availableQuantity']) !== undefined) score += 15;
+    if (firstValue(product, ['price', 'currentPrice', 'salePrice']) !== undefined) score += 5;
+    return score;
 }
 
 async function getProductDetails(
@@ -67,7 +67,9 @@ async function getProductDetails(
         timeslotStart: start.toISOString(),
         timeslotEnd: end.toISOString(),
     });
-    const details = parseMcpContent(response).map(value => findProduct(value)).find(Boolean) || null;
+    const details = parseMcpContent(response)
+        .flatMap(value => collectProducts(value))
+        .sort((left, right) => productScore(right, slug) - productScore(left, slug))[0] || null;
     if (details) detailsCache.set(cacheKey, { expiresAt: Date.now() + DETAILS_TTL, product: details });
     return details;
 }

@@ -10,6 +10,40 @@ export interface MonitoringFavoritesResult {
     checkedFor: string;
 }
 
+function nestedFieldValues(root: any, fieldNames: string[], maxDepth = 5): unknown[] {
+    const names = new Set(fieldNames.map(name => name.toLowerCase()));
+    const values: unknown[] = [];
+    const visited = new Set<any>();
+    const visit = (value: any, depth: number): void => {
+        if (!value || typeof value !== 'object' || depth > maxDepth || visited.has(value)) return;
+        visited.add(value);
+        if (Array.isArray(value)) {
+            value.forEach(item => visit(item, depth + 1));
+            return;
+        }
+        for (const [key, nested] of Object.entries(value)) {
+            if (names.has(key.toLowerCase()) && nested !== undefined && nested !== null) values.push(nested);
+            if (nested && typeof nested === 'object') visit(nested, depth + 1);
+        }
+    };
+    visit(root, 0);
+    return values;
+}
+
+function scalarText(value: unknown): string {
+    if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+    if (!value || typeof value !== 'object') return '';
+    const object = value as Record<string, unknown>;
+    for (const key of ['name', 'label', 'title', 'text', 'value', 'code']) {
+        if (typeof object[key] === 'string' || typeof object[key] === 'number') return String(object[key]).trim();
+    }
+    return '';
+}
+
+function truthy(value: unknown): boolean {
+    return value === true || value === 1 || value === '1' || value === 'true';
+}
+
 function favoritesFromResponse(response: any): any[] {
     for (const value of parseMcpContent(response)) {
         if (Array.isArray(value)) return value;
@@ -21,33 +55,46 @@ function favoritesFromResponse(response: any): any[] {
 }
 
 export function productAvailability(product: any): boolean | null {
-    for (const field of ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']) {
-        if (product?.[field] === true || product?.[field] === 1 || product?.[field] === '1' || product?.[field] === 'true') return false;
-    }
-    if (product?.stock !== undefined && product?.stock !== null && product?.stock !== '') {
-        if (typeof product.stock === 'string') {
-            const normalized = product.stock.trim().toLowerCase();
-            if (['out_of_stock', 'out-of-stock', 'unavailable', 'sold_out', 'sold-out', 'none', 'false'].includes(normalized)) return false;
-            if (['in_stock', 'in-stock', 'available', 'true'].includes(normalized)) return true;
-        }
-        const numeric = Number(product.stock);
-        if (Number.isFinite(numeric)) return numeric > 0;
-    }
-    for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity', 'quantityAvailable', 'quantity_available']) {
-        if (product?.[field] !== undefined && product?.[field] !== null && product?.[field] !== '') {
-            const numeric = Number(product[field]);
+    const statuses = nestedFieldValues(product, [
+        'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
+        'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
+    ]).map(scalarText).join(' ').toLowerCase();
+    if (/очіку|expected|awaiting|coming[_\s-]?soon|out[_\s-]?of[_\s-]?stock|unavailable|not[_\s-]?available|sold[_\s-]?out|немає|відсут/.test(statuses)) return false;
+
+    const onlineOnly = nestedFieldValues(product, [
+        'onlineOnly', 'online_only', 'isOnlineOnly', 'is_online_only', 'onlyOnline', 'only_online',
+        'priceOnlyOnline', 'price_only_online', 'isOnlinePrice', 'is_online_price', 'priceType', 'price_type',
+    ]).some(value => truthy(value) || /online|онлайн/.test(scalarText(value).toLowerCase()));
+    if (onlineOnly || /only[_\s-]?online|лише онлайн|тільки онлайн/.test(statuses)) return null;
+
+    if (nestedFieldValues(product, ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']).some(truthy)) return false;
+    for (const stockValue of nestedFieldValues(product, ['stock'])) {
+        if (stockValue !== null && stockValue !== '') {
+            if (typeof stockValue === 'string') {
+                const normalized = stockValue.trim().toLowerCase();
+                if (['out_of_stock', 'out-of-stock', 'unavailable', 'sold_out', 'sold-out', 'none', 'false'].includes(normalized)) return false;
+                if (['in_stock', 'in-stock', 'available', 'true'].includes(normalized)) return true;
+            }
+            const numeric = Number(stockValue);
             if (Number.isFinite(numeric)) return numeric > 0;
         }
     }
-    for (const field of [
+    for (const quantity of nestedFieldValues(product, [
+        'stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity', 'quantityAvailable', 'quantity_available'
+    ])) {
+        if (quantity !== null && quantity !== '') {
+            const numeric = Number(quantity);
+            if (Number.isFinite(numeric)) return numeric > 0;
+        }
+    }
+    for (const value of nestedFieldValues(product, [
         'in_stock', 'inStock', 'is_in_stock', 'isInStock',
         'deliveryAvailable', 'delivery_available', 'isAvailableForDelivery', 'availableForDelivery'
-    ]) {
-        if (product?.[field] !== undefined) return product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true';
+    ])) {
+        return truthy(value);
     }
-    for (const field of ['available', 'isAvailable', 'is_available']) {
-        if (product?.[field] !== undefined
-            && !(product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true')) return false;
+    for (const value of nestedFieldValues(product, ['available', 'isAvailable', 'is_available'])) {
+        if (!truthy(value)) return false;
     }
     return null;
 }

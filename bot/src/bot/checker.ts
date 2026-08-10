@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import db from '../db/index';
 import { runUserCheck } from '../notifications/engine';
+import { sendTelegramMessage } from '../api/telegram';
 
 export async function runChecker(bot: Telegraf, onlyTgId?: number): Promise<string> {
     const users = await db.prepare(
@@ -15,7 +16,7 @@ export async function runChecker(bot: Telegraf, onlyTgId?: number): Promise<stri
     let errors = 0;
 
     for (const user of users) {
-        const result = await runUserCheck(Number(user.tg_id), (chatId, text) => bot.telegram.sendMessage(chatId, text));
+        const result = await runUserCheck(Number(user.tg_id), sendTelegramMessage);
         if (result.checked) checked++;
         products += result.products;
         notifications += result.notifications;

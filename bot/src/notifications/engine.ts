@@ -7,9 +7,10 @@ import { rankProductAlternatives, type RankedAlternative } from './alternative-r
 import { activePersonalPromos, personalPromoMessage, promoIdOf, promoSignature } from './personal-promos';
 import { meaningfulPriceDrop, nextStableBoolean, shouldRecheckAlternative } from './notification-rules';
 import { productPricing } from './product-pricing';
+import { bold, escapeTelegramHtml, italic, productLink } from './telegram-format';
 
 type JsonObject = Record<string, any>;
-export type SendMessage = (chatId: number, text: string) => Promise<unknown>;
+export type SendMessage = (chatId: number, text: string, imageUrl?: string) => Promise<unknown>;
 
 export interface CheckResult {
     checked: boolean;
@@ -119,7 +120,14 @@ function money(value: number): string {
 }
 
 function storeMessageSuffix(context: StoreContext): string {
-    return `\n\n📍 Ціни для магазину: ${context.storeLabel}`;
+    return `\n\n${italic(`Ціни для магазину: ${context.storeLabel}`)}`;
+}
+
+function productImageUrl(product: any): string | undefined {
+    const candidate = firstValue(product, ['image', 'imageUrl', 'image_url', 'thumbnail', 'previewImage']);
+    const value = typeof candidate === 'string' ? candidate : candidate?.url || candidate?.src;
+    const normalized = String(value || '').trim();
+    return /^https?:\/\//i.test(normalized) ? normalized : undefined;
 }
 
 function hasSameContext(product: any, context: { branchId: string; deliveryType: string }): boolean {
@@ -367,27 +375,27 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             const target = targets.find(item => productIds.includes(String(item.product_id)));
             const targetPrice = Number(target?.target_price || 0);
             const messages: string[] = [];
-            let alternativeMessageAdded = false;
             const name = String(firstValue(product, ['name', 'title', 'productName']) || productId);
+            const linkedName = productLink(name, firstValue(product, ['slug', 'productSlug']));
             const targetReached = Boolean(notificationsEnabled && settings.price_target && targetPrice > 0 && currentPrice <= targetPrice);
             const priceDrop = eventPrevious ? meaningfulPriceDrop(eventPrevious.current_price, currentPrice) : null;
             const promoStarted = Boolean(eventPrevious && !boolValue(eventPrevious.has_promo) && hasPromo);
             const smartBuyStarted = Boolean(eventPrevious && smartBuy && !boolValue(eventPrevious.is_smart_buy));
-            const priceCondition = pricing.condition ? ` · ${pricing.condition}` : '';
+            const priceCondition = pricing.condition ? ` · ${italic(pricing.condition)}` : '';
 
             if (targetReached) {
-                messages.push(`🎯 Бажана ціна досягнута\n${name}\nЗараз: ${money(currentPrice)} ₴${priceCondition} · бажана ціна: ${money(targetPrice)} ₴`);
+                messages.push(`🎯 ${bold('Бажана ціна досягнута')}\n${linkedName}\nЗараз: ${bold(`${money(currentPrice)} ₴`)}${priceCondition} · бажана ціна: ${bold(`${money(targetPrice)} ₴`)}`);
             } else if (notificationsEnabled && settings.smart_buy && smartBuyStarted) {
-                messages.push(`🧠 Велика знижка\n${name}\nЗараз: ${money(currentPrice)} ₴${priceCondition} · на ${pricing.discountPercent}% нижче звичайної ціни.`);
+                messages.push(`🧠 ${bold('Оце вже серйозна знижка')}\n${linkedName}\nЗараз: ${bold(`${money(currentPrice)} ₴`)}${priceCondition} · на ${bold(`${pricing.discountPercent}%`)} нижче звичайної ціни.`);
             } else if (notificationsEnabled && settings.promo_new && promoStarted) {
-                messages.push(`🔥 Нова акція\n${name}\nАкційна ціна: ${money(currentPrice)} ₴${priceCondition}${pricing.discountPercent ? ` · знижка ${pricing.discountPercent}%` : ''}`);
+                messages.push(`🔥 ${bold('Нова акція — час ловити вигоду')}\n${linkedName}\nАкційна ціна: ${bold(`${money(currentPrice)} ₴`)}${priceCondition}${pricing.discountPercent ? ` · знижка ${bold(`${pricing.discountPercent}%`)}` : ''}`);
             } else if (notificationsEnabled && settings.price_drop && priceDrop) {
-                messages.push(`📉 Помітне зниження ціни\n${name}\nБуло: ${money(Number(eventPrevious.current_price))} ₴ · зараз: ${money(currentPrice)} ₴${priceCondition}\nЕкономія: ${money(priceDrop.amount)} ₴ (${Math.round(priceDrop.percent)}%)`);
+                messages.push(`📉 ${bold('Ціна пішла вниз')}\n${linkedName}\nБуло: ${bold(`${money(Number(eventPrevious.current_price))} ₴`)} · зараз: ${bold(`${money(currentPrice)} ₴`)}${priceCondition}\nЕкономія: ${bold(`${money(priceDrop.amount)} ₴ (${Math.round(priceDrop.percent)}%)`)}`);
             }
             if (notificationsEnabled && monitoring.availabilityReliable && settings.in_stock && stockState.changed && stockState.stable) {
-                messages.push(`📦 Товар знову в наявності\n${name}`);
+                messages.push(`📦 ${bold('Знову на полиці!')}\n${linkedName}\nМожна додавати в кошик.`);
             } else if (notificationsEnabled && monitoring.availabilityReliable && settings.delivery_available && hasDistinctDeliveryAvailability(product) && deliveryState.changed && deliveryState.stable) {
-                messages.push(`🚚 Доставка знову доступна\n${name}`);
+                messages.push(`🚚 ${bold('Знову можна замовити з доставкою')}\n${linkedName}`);
             }
             const alternativeIsNew = Boolean(alternative) && (
                 String(eventPrevious?.alternative_product_id || '') !== alternative!.productId ||
@@ -395,18 +403,19 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
             );
             if (!targetReached && notificationsEnabled && settings.alt_cheaper && eventPrevious && alternative && alternativeIsNew) {
                 const comparison = alternative.comparisonLabel
-                    ? `\nЦіна за ${alternative.comparisonLabel}: ${money(alternative.comparisonPrice)} ₴ (цей товар: ${money(alternative.currentComparisonPrice)} ₴)`
+                    ? `\nЦіна за ${escapeTelegramHtml(alternative.comparisonLabel)}: ${bold(`${money(alternative.comparisonPrice)} ₴`)} (цей товар: ${bold(`${money(alternative.currentComparisonPrice)} ₴`)})`
                     : '';
                 const savings = Math.max(0, currentPrice - alternative.price);
-                messages.push(`💡 Точний дешевший варіант\n${name}: ${money(currentPrice)} ₴\n${alternative.name}: ${money(alternative.price)} ₴${comparison}\nЧому підходить: той самий бренд, тип і сумісна фасовка\nЕкономія: ${money(savings)} ₴\nhttps://silpo.ua/product/${alternative.slug}`);
-                alternativeMessageAdded = true;
+                const linkedAlternative = productLink(alternative.name, alternative.slug);
+                messages.push(`💡 ${bold('Знайшов вигіднішого двійника')}\n${linkedName}: ${bold(`${money(currentPrice)} ₴`)}\n${linkedAlternative}: ${bold(`${money(alternative.price)} ₴`)}${comparison}\nПідходить за брендом, типом і фасовкою.\nЕкономія: ${bold(`${money(savings)} ₴`)}`);
             }
 
             if (messages.length) {
-                const slug = product?.slug && (!alternativeMessageAdded || messages.length > 1)
-                    ? `\nhttps://silpo.ua/product/${product.slug}`
-                    : '';
-                await sendMessage(tgId, `${messages.join('\n\n')}${slug}${storeMessageSuffix(context)}`);
+                await sendMessage(
+                    tgId,
+                    `${messages.join('\n\n')}${storeMessageSuffix(context)}`,
+                    productImageUrl(product)
+                );
                 notifications++;
                 if (target && targetReached) {
                     await db.prepare('UPDATE user_favorites SET target_price = 0 WHERE tg_id = ? AND product_id = ?')

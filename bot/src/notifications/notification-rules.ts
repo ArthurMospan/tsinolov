@@ -11,7 +11,7 @@ export interface StableBooleanState {
 }
 
 const MIN_PRICE_DROP_AMOUNT = 2;
-const MIN_PRICE_DROP_PERCENT = 2;
+const MIN_PRICE_DROP_PERCENT = 5;
 
 export function meaningfulPriceDrop(previousPrice: unknown, currentPrice: unknown): PriceDrop | null {
     const previous = Number(previousPrice);

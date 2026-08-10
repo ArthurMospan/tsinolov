@@ -5,6 +5,8 @@ import { allProductsUnexpectedlyUnavailable, nextDaytimeReference, productAvaila
 test('recognizes Silpo stock fields without confusing missing data with out of stock', () => {
     assert.equal(productAvailability({ stock: 3, available: true }), true);
     assert.equal(productAvailability({ stock: 0, available: false }), false);
+    assert.equal(productAvailability({ stock: 0, available: true }), false);
+    assert.equal(productAvailability({ isOutOfStock: true, available: true }), false);
     assert.equal(productAvailability({ name: 'Товар' }), null);
 });
 

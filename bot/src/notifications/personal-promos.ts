@@ -1,3 +1,5 @@
+import { bold, escapeTelegramHtml } from './telegram-format';
+
 export function promoIdOf(promo: any): string {
     return String(promo?.promoId ?? promo?.id ?? promo?.promo_id ?? '');
 }
@@ -21,10 +23,10 @@ export function activePersonalPromos(promos: any[], now = Date.now()): any[] {
 
 export function personalPromoMessage(promos: any[]): string {
     const visible = promos.slice(0, 5).map(promo => {
-        const description = String(promo?.description || 'Персональна пропозиція').trim();
+        const description = escapeTelegramHtml(String(promo?.description || 'Персональна пропозиція').trim());
         const reward = String(promo?.rewardText || '').trim();
-        return `• ${description}${reward ? ` — ${reward}` : ''}`;
+        return `• <b>${description}</b>${reward ? ` — ${bold(reward)}` : ''}`;
     });
     const remainder = promos.length - visible.length;
-    return `⭐ Нові персональні пропозиції\n${visible.join('\n')}${remainder > 0 ? `\nІ ще ${remainder}` : ''}`;
+    return `⭐ ${bold('Для тебе зʼявилися нові пропозиції')}\n${visible.join('\n')}${remainder > 0 ? `\nІ ще ${bold(remainder)}` : ''}`;
 }

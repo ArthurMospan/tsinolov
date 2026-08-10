@@ -7,7 +7,7 @@ import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
 import { profileIdentityFromMcp } from '../api/mcp-profile';
 import { getStoreContext, listBranches, parseMcpContent, publicStoreLabel } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
-import { getMonitoringFavorites } from '../api/monitoring-favorites';
+import { getMonitoringFavorites, productAvailability } from '../api/monitoring-favorites';
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
@@ -232,6 +232,7 @@ app.get('/api/favorites', async (req, res) => {
                 const pid = f.id || f.product_id || f.productId || f.slug;
                 return {
                     ...f,
+                    in_stock: productAvailability(f),
                     target_price: targetMap.get(pid) || 0
                 };
             });
@@ -279,6 +280,7 @@ app.get('/api/products/search', async (req, res) => {
         res.json({
             products: search.products.map(product => ({
                 ...product,
+                in_stock: productAvailability(product),
                 isFavorite: isFavoriteProduct(product, favorites),
             })),
             store: context,

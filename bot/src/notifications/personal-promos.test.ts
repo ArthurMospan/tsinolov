@@ -20,5 +20,5 @@ test('signature changes when the reward or validity changes', () => {
 
 test('promo notification is compact and includes the reward', () => {
     const message = personalPromoMessage([{ description: 'На каву', rewardText: '-25%' }]);
-    assert.match(message, /На каву — -25%/);
+    assert.match(message, /<b>На каву<\/b> — <b>-25%<\/b>/);
 });

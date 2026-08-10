@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import {
   ArrowLeft,
   Bell,
@@ -17,15 +17,18 @@ import {
   ShoppingCart,
   ShieldCheck,
   Sparkles,
+  Star,
   Store,
   Tag,
+  TrendingDown,
   UserRound,
   X,
 } from 'lucide-react';
 
 const API_URL = '';
-const SILPO_LOGO_URL = 'https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/99/68/eb9968ce-3c3b-be25-ecb3-4903ba0b7b7d/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg';
+const SILPO_LOGO_URL = '/Silpo_outline_logo.svg';
 const SILPO_ACCOUNT_URL = 'https://my.silpo.ua/';
+const SILPO_BASKET_URL = 'https://silpo.ua/basket';
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 
@@ -151,17 +154,26 @@ const RECOMMENDED_SETTINGS: Settings = {
 
 const SETTING_DEFINITIONS: Array<{
   key: SettingKey;
-  icon: string;
+  icon: typeof Sparkles;
   title: string;
   description: string;
 }> = [
-  { key: 'price_target', icon: '🎯', title: 'Бажана ціна', description: 'Коли товар коштує не дорожче за бажану ціну' },
-  { key: 'price_drop', icon: '📉', title: 'Помітне зниження ціни', description: 'Від 2% і щонайменше 2 ₴ — без копійчаного шуму' },
-  { key: 'promo_new', icon: '🔥', title: 'Нові акції', description: 'Коли на товар зʼявилася акція' },
-  { key: 'promo_personal', icon: '⭐', title: 'Нові персональні пропозиції', description: 'Коли в акаунті Сільпо з’являється нова пропозиція' },
-  { key: 'in_stock', icon: '📦', title: 'Повернення в наявність', description: 'Коли недоступний товар знову можна купити' },
-  { key: 'alt_cheaper', icon: '💡', title: 'Точні дешевші варіанти', description: 'Лише той самий бренд, тип і сумісна фасовка' },
-  { key: 'smart_buy', icon: '🧠', title: 'Велика знижка', description: 'Коли ціна щонайменше на 20% нижча за звичайну' },
+  { key: 'price_target', icon: Sparkles, title: 'Бажана ціна', description: 'Коли товар коштує не дорожче за бажану ціну' },
+  { key: 'price_drop', icon: TrendingDown, title: 'Помітне зниження ціни', description: 'Від 5% і щонайменше 2 ₴ — без дрібного шуму' },
+  { key: 'promo_new', icon: Tag, title: 'Нові акції', description: 'Коли на товар зʼявилася акція' },
+  { key: 'promo_personal', icon: Star, title: 'Нові персональні пропозиції', description: 'Коли в акаунті Сільпо з’являється нова пропозиція' },
+  { key: 'in_stock', icon: Package, title: 'Повернення в наявність', description: 'Коли недоступний товар знову можна купити' },
+  { key: 'alt_cheaper', icon: Search, title: 'Точні дешевші варіанти', description: 'Лише той самий бренд, тип і сумісна фасовка' },
+  { key: 'smart_buy', icon: Bell, title: 'Велика знижка', description: 'Коли ціна щонайменше на 20% нижча за звичайну' },
+];
+
+const PRODUCT_CATEGORIES = [
+  'Овочі та фрукти',
+  'Молочні продукти',
+  'Мʼясо',
+  'Сири',
+  'Напої',
+  'Солодощі',
 ];
 
 function numberValue(value: unknown, fallback = 0): number {
@@ -172,6 +184,34 @@ function numberValue(value: unknown, fallback = 0): number {
 function booleanValue(value: unknown, fallback = false): boolean {
   if (value === undefined || value === null) return fallback;
   return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function productAvailabilityValue(item: any): boolean | null {
+  for (const field of ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']) {
+    if (booleanValue(item?.[field])) return false;
+  }
+  for (const field of ['in_stock', 'inStock', 'is_in_stock', 'isInStock']) {
+    if (item?.[field] !== undefined && item?.[field] !== null) return booleanValue(item[field]);
+  }
+  if (item?.stock !== undefined && item?.stock !== null && item?.stock !== '') {
+    if (typeof item.stock === 'string') {
+      const normalized = item.stock.trim().toLowerCase();
+      if (['out_of_stock', 'out-of-stock', 'unavailable', 'sold_out', 'sold-out', 'none', 'false'].includes(normalized)) return false;
+      if (['in_stock', 'in-stock', 'available', 'true'].includes(normalized)) return true;
+    }
+    const stock = Number(item.stock);
+    if (Number.isFinite(stock)) return stock > 0;
+  }
+  for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity']) {
+    if (item?.[field] !== undefined && item?.[field] !== null && item?.[field] !== '') {
+      const quantity = Number(item[field]);
+      if (Number.isFinite(quantity)) return quantity > 0;
+    }
+  }
+  for (const field of ['available', 'isAvailable', 'is_available']) {
+    if (item?.[field] !== undefined && item?.[field] !== null) return booleanValue(item[field]);
+  }
+  return null;
 }
 
 function normalizeProduct(item: any, availabilityReliable = true): Product {
@@ -201,14 +241,8 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
     has_promo: booleanValue(hasExplicitPromo) || Boolean(specialPrice) || oldPrice > currentPrice,
     target_price: numberValue(item.target_price ?? item.targetPrice),
     slug: item.slug ? String(item.slug) : undefined,
-    available: !availabilityReliable ? null : item.available !== undefined
-      ? booleanValue(item.available)
-      : item.in_stock !== undefined
-        ? booleanValue(item.in_stock)
-        : item.stock !== undefined
-          ? numberValue(item.stock) > 0
-          : true,
-    stock: numberValue(item.stock, 1),
+    available: !availabilityReliable ? null : productAvailabilityValue(item),
+    stock: numberValue(item.stock),
     displayWeight: item.displayWeight ?? item.display_weight ?? item.unit ?? undefined,
     company_id: item.companyId ? String(item.companyId) : undefined,
     special_price: specialPrice,
@@ -277,20 +311,23 @@ function App() {
   const [productSearchLoading, setProductSearchLoading] = useState(false);
   const [productSearchError, setProductSearchError] = useState(false);
   const [addingFavoriteId, setAddingFavoriteId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pullDistance, setPullDistance] = useState(0);
+  const pullStartY = useRef<number | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 2600);
   }, []);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (showLoader = true) => {
     if (!tgId) {
       setIsAuthenticated(false);
       setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
+    if (showLoader) setIsLoading(true);
     let authenticatedSession = false;
     try {
       const statusResponse = await apiFetch(`${API_URL}/api/auth/status?tg_id=${tgId}`);
@@ -378,9 +415,39 @@ function App() {
         showToast('Не вдалося завантажити дані');
       }
     } finally {
-      setIsLoading(false);
+      if (showLoader) setIsLoading(false);
     }
   }, [showToast, tgId]);
+
+  const refreshPage = useCallback(async () => {
+    if (isRefreshing) return;
+    setActiveTab('favorites');
+    setProfileMenuOpen(false);
+    setIsRefreshing(true);
+    try {
+      await loadData(false);
+      showToast('Дані оновлено');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, loadData, showToast]);
+
+  const handlePullStart = (event: TouchEvent<HTMLDivElement>) => {
+    if (window.scrollY <= 0 && event.touches.length === 1) pullStartY.current = event.touches[0].clientY;
+  };
+
+  const handlePullMove = (event: TouchEvent<HTMLDivElement>) => {
+    if (pullStartY.current === null || window.scrollY > 0) return;
+    const distance = Math.max(0, event.touches[0].clientY - pullStartY.current);
+    setPullDistance(Math.min(68, distance * 0.42));
+  };
+
+  const handlePullEnd = () => {
+    const shouldRefresh = pullDistance >= 48;
+    pullStartY.current = null;
+    setPullDistance(0);
+    if (shouldRefresh) void refreshPage();
+  };
 
   useEffect(() => {
     const telegram = (window as any).Telegram?.WebApp;
@@ -393,7 +460,7 @@ function App() {
       // iOS fullscreen places Telegram's Close / More controls over the page.
       // Some clients report zero insets briefly, so reserve that space until
       // Telegram supplies the final content-safe values.
-      const top = Math.max(safeTop, contentTop, telegram?.isFullscreen ? 100 : 0);
+      const top = Math.max(safeTop, contentTop, telegram?.isFullscreen ? 76 : 0);
       root.style.setProperty('--tg-runtime-content-safe-top', `${top}px`);
       root.style.setProperty('--tg-runtime-content-safe-bottom', `${Math.max(safeBottom, contentBottom)}px`);
     };
@@ -402,7 +469,7 @@ function App() {
       telegram?.expand();
       telegram?.disableVerticalSwipes?.();
       telegram?.requestFullscreen?.();
-      telegram?.setHeaderColor?.('#f97316');
+      telegram?.setHeaderColor?.('#e85d0b');
       telegram?.setBackgroundColor?.('#f7f7f5');
       telegram?.setBottomBarColor?.('#ffffff');
     } catch {
@@ -531,15 +598,18 @@ function App() {
     }
   };
 
-  const openSilpoAccount = () => {
+  const openExternalUrl = (url: string) => {
     setProfileMenuOpen(false);
     const telegram = (window as any).Telegram?.WebApp;
     if (telegram?.openLink) {
-      telegram.openLink(SILPO_ACCOUNT_URL);
+      telegram.openLink(url);
       return;
     }
-    window.open(SILPO_ACCOUNT_URL, '_blank', 'noopener,noreferrer');
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
+
+  const openSilpoAccount = () => openExternalUrl(SILPO_ACCOUNT_URL);
+  const openSilpoBasket = () => openExternalUrl(SILPO_BASKET_URL);
 
   const openFavorites = () => {
     setActiveTab('favorites');
@@ -834,6 +904,18 @@ function App() {
     return { minimum, items, total, ready: minimum > 0 && items.length > 0 && total >= minimum };
   }, [favorites, userProfile?.orderMinimum]);
 
+  const favoriteInsights = useMemo(() => {
+    const targetCount = favorites.filter(product => product.target_price > 0).length;
+    const promoCount = favorites.filter(product => product.has_promo).length;
+    const unavailableCount = favorites.filter(product => product.available === false).length;
+    const parts = [
+      `${targetCount} ${targetCount === 1 ? 'бажана ціна' : 'бажаних цін'}`,
+      `${promoCount} ${promoCount === 1 ? 'товар з акцією' : 'товарів з акціями'}`,
+    ];
+    if (unavailableCount > 0) parts.push(`${unavailableCount} зараз немає`);
+    return parts.join(' · ');
+  }, [favorites]);
+
   const addDealBasket = async () => {
     if (!dealBasket.ready) return;
     setAddingDealBasket(true);
@@ -867,15 +949,26 @@ function App() {
   };
 
   if (isLoading) {
-    return <div className="loading-screen"><div className="loading-spinner" /><p>Завантажуємо улюблені товари…</p></div>;
+    return (
+      <div className="loading-screen">
+        <span className="loading-logo-wrap"><img src={SILPO_LOGO_URL} alt="Сільпо" /></span>
+        <p>Завантажуємо улюблені товари…</p>
+      </div>
+    );
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onTouchStart={handlePullStart}
+      onTouchMove={handlePullMove}
+      onTouchEnd={handlePullEnd}
+      onTouchCancel={handlePullEnd}
+    >
       {toast && <div className="toast" role="status">{toast}</div>}
 
       <header className="app-header">
-        <button className="brand-lockup brand-home-button" type="button" onClick={openFavorites} aria-label="На головну">
+        <button className="brand-lockup brand-home-button" type="button" onClick={() => void refreshPage()} aria-label="Оновити улюблені товари">
           <div className="brand-mark">
             <img className="brand-logo" src={SILPO_LOGO_URL} alt="Сільпо" />
           </div>
@@ -908,8 +1001,9 @@ function App() {
                 <>
                   <button className="profile-menu-backdrop" type="button" onClick={() => setProfileMenuOpen(false)} aria-label="Закрити меню профілю" />
                   <div className="profile-menu" role="menu">
-                    <button type="button" role="menuitem" onClick={openFavorites}><Heart size={18} /><span>Улюблені</span></button>
                     <button type="button" role="menuitem" onClick={openSilpoAccount}><Link2 size={18} /><span>Кабінет Сільпо</span></button>
+                    <button type="button" role="menuitem" onClick={openFavorites}><Heart size={18} /><span>Мої улюблені товари</span></button>
+                    <button type="button" role="menuitem" onClick={openSilpoBasket}><ShoppingCart size={18} /><span>Мій кошик</span></button>
                     <span className="profile-menu-divider" />
                     <button className="profile-menu-danger" type="button" role="menuitem" onClick={() => void logout()}><LogOut size={18} /><span>Вийти</span></button>
                   </div>
@@ -938,6 +1032,11 @@ function App() {
         </button>
       )}
 
+      <div className={pullDistance > 0 || isRefreshing ? 'pull-refresh visible' : 'pull-refresh'} style={{ height: isRefreshing ? 34 : pullDistance }} aria-hidden="true">
+        <span className={isRefreshing ? 'refresh-indicator spinning' : 'refresh-indicator'}>↻</span>
+        <small>{isRefreshing ? 'Оновлюємо…' : pullDistance >= 48 ? 'Відпускайте' : 'Потягніть для оновлення'}</small>
+      </div>
+
       {!isAuthenticated && (
         <button className="connect-card" onClick={connectSilpo}>
           <span className="connect-icon"><Link2 size={20} /></span>
@@ -951,9 +1050,8 @@ function App() {
           <section className="page-section">
             <div className="section-heading">
               <div>
-                <p className="section-kicker">МОЇ УЛЮБЛЕНІ</p>
-                <h2>Товари під наглядом</h2>
-                {favorites.length > 0 && <p className="section-subtitle">{favorites.length} товарів · {favorites.filter(item => item.target_price > 0).length} бажаних цін</p>}
+                <h2>Улюблені товари</h2>
+                {favorites.length > 0 && <p className="section-subtitle">{favoriteInsights}</p>}
               </div>
               <span className="count-pill">{favorites.length}</span>
             </div>
@@ -961,8 +1059,8 @@ function App() {
             {isAuthenticated && (
               <button className="product-search-launcher" type="button" onClick={openProductSearch}>
                 <Search size={20} />
-                <span>Пошук товарів</span>
-                <span className="product-search-launcher-hint">Назва або артикул</span>
+                <span>Додати улюблений товар</span>
+                <span className="product-search-launcher-hint">Знайти й додати</span>
               </button>
             )}
 
@@ -999,7 +1097,7 @@ function App() {
                         </div>
                         <button className={`target-button ${product.target_price > 0 ? 'target-set' : ''}`} onClick={() => openTargetModal(product)}>
                           <Sparkles size={15} />
-                          {product.target_price > 0 ? `Бажана ціна: ${formatPrice(product.target_price)}` : 'Встановити бажану ціну'}
+                          <span>{product.target_price > 0 ? `Бажана ціна: ${formatPrice(product.target_price)}` : 'Встановити бажану ціну'}</span>
                         </button>
                         <div className="product-footer">
                           {product.available !== false ? (
@@ -1041,13 +1139,16 @@ function App() {
               <div><strong>Усе приходитиме в чат із ботом</strong><p>Не треба перевіряти застосунок вручну. Коли станеться вибрана подія, бот надішле коротке повідомлення з товаром, ціною та магазином.</p></div>
             </div>
             <div className="settings-list">
-              {SETTING_DEFINITIONS.map(item => (
-                <label className="setting-row" key={item.key}>
-                  <span className="setting-emoji">{item.icon}</span>
-                  <span className="setting-copy"><strong>{item.title}</strong><small>{item.description}</small></span>
-                  <span className={`toggle ${settings[item.key] ? 'on' : ''}`}><input type="checkbox" checked={settings[item.key]} onChange={() => void toggleSetting(item.key)} /><span className="toggle-knob" /></span>
-                </label>
-              ))}
+              {SETTING_DEFINITIONS.map(item => {
+                const SettingIcon = item.icon;
+                return (
+                  <label className="setting-row" key={item.key}>
+                    <span className="setting-emoji"><SettingIcon size={20} /></span>
+                    <span className="setting-copy"><strong>{item.title}</strong><small>{item.description}</small></span>
+                    <span className={`toggle ${settings[item.key] ? 'on' : ''}`}><input type="checkbox" checked={settings[item.key]} onChange={() => void toggleSetting(item.key)} /><span className="toggle-knob" /></span>
+                  </label>
+                );
+              })}
             </div>
             <div className="info-card"><ShieldCheck size={18} /><p><strong>Захист від хибних сповіщень.</strong> Наявність підтверджується двома перевірками, дрібні коливання ціни ігноруються, а після зміни магазину порівняння починається заново. Бажана ціна перевіряється одразу.</p></div>
           </section>
@@ -1080,6 +1181,7 @@ function App() {
                   {SETTING_DEFINITIONS.map(item => {
                     const checked = onboardingDraft[item.key];
                     const recommended = ['price_target', 'price_drop', 'promo_personal'].includes(item.key);
+                    const SettingIcon = item.icon;
                     return (
                       <button
                         className={checked ? 'onboarding-option selected' : 'onboarding-option'}
@@ -1087,7 +1189,7 @@ function App() {
                         key={item.key}
                         onClick={() => setOnboardingDraft(previous => ({ ...previous, [item.key]: !previous[item.key] }))}
                       >
-                        <span className="setting-emoji">{item.icon}</span>
+                        <span className="setting-emoji"><SettingIcon size={20} /></span>
                         <span><strong>{item.title}{recommended && <small>Рекомендовано</small>}</strong><em>{item.description}</em></span>
                         <i>{checked && <Check size={16} />}</i>
                       </button>
@@ -1109,7 +1211,7 @@ function App() {
           <section className="product-search-sheet" role="dialog" aria-modal="true" aria-labelledby="product-search-title" onMouseDown={event => event.stopPropagation()}>
             <div className="sheet-handle" />
             <div className="sheet-header">
-              <div><p className="section-kicker">СІЛЬПО</p><h2 id="product-search-title">Пошук товарів</h2></div>
+              <div><p className="section-kicker">СІЛЬПО</p><h2 id="product-search-title">Додати улюблений товар</h2></div>
               <button className="icon-button" type="button" onClick={() => setProductSearchOpen(false)} aria-label="Закрити"><X size={20} /></button>
             </div>
             <p className="product-search-context"><MapPin size={14} /><span>Ціна й наявність для <strong>{userProfile?.storeLabel}</strong></span></p>
@@ -1118,8 +1220,7 @@ function App() {
               <input
                 value={productSearch}
                 onChange={event => setProductSearch(event.target.value)}
-                placeholder="Назва товару або артикул"
-                autoFocus
+                placeholder="Що хочете додати?"
               />
               {productSearch && <button type="button" onClick={() => setProductSearch('')} aria-label="Очистити пошук"><X size={16} /></button>}
             </label>
@@ -1128,8 +1229,13 @@ function App() {
               {productSearch.trim().length < 2 ? (
                 <div className="product-search-empty">
                   <span><Search size={27} /></span>
-                  <strong>Що хочете відстежувати?</strong>
-                  <p>Напишіть хоча б 2 символи. Пошук врахує асортимент і ціни вибраного магазину.</p>
+                  <strong>Оберіть категорію або знайдіть товар</strong>
+                  <p>Покажемо асортимент і актуальні ціни вибраного магазину.</p>
+                  <div className="product-category-grid">
+                    {PRODUCT_CATEGORIES.map(category => (
+                      <button type="button" key={category} onClick={() => setProductSearch(category)}>{category}</button>
+                    ))}
+                  </div>
                 </div>
               ) : productSearchLoading ? (
                 <div className="product-search-state"><span className="loading-spinner" />Шукаємо в каталозі Сільпо…</div>

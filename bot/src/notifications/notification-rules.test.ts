@@ -5,6 +5,7 @@ import { discountPercent, meaningfulPriceDrop, nextStableBoolean, shouldRecheckA
 test('ignores tiny price noise', () => {
     assert.equal(meaningfulPriceDrop(100, 99), null);
     assert.equal(meaningfulPriceDrop(1000, 995), null);
+    assert.equal(meaningfulPriceDrop(100, 96), null);
 });
 
 test('accepts a meaningful drop and explains it', () => {

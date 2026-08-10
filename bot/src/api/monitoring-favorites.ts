@@ -21,7 +21,10 @@ function favoritesFromResponse(response: any): any[] {
 }
 
 export function productAvailability(product: any): boolean | null {
-    for (const field of ['in_stock', 'inStock']) {
+    for (const field of ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']) {
+        if (product?.[field] === true || product?.[field] === 1 || product?.[field] === '1' || product?.[field] === 'true') return false;
+    }
+    for (const field of ['in_stock', 'inStock', 'is_in_stock', 'isInStock']) {
         if (product?.[field] !== undefined) return product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true';
     }
     if (product?.stock !== undefined && product?.stock !== null && product?.stock !== '') {
@@ -33,7 +36,15 @@ export function productAvailability(product: any): boolean | null {
         const numeric = Number(product.stock);
         if (Number.isFinite(numeric)) return numeric > 0;
     }
-    if (product?.available !== undefined) return product.available === true || product.available === 1 || product.available === '1' || product.available === 'true';
+    for (const field of ['stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity']) {
+        if (product?.[field] !== undefined && product?.[field] !== null && product?.[field] !== '') {
+            const numeric = Number(product[field]);
+            if (Number.isFinite(numeric)) return numeric > 0;
+        }
+    }
+    for (const field of ['available', 'isAvailable', 'is_available']) {
+        if (product?.[field] !== undefined) return product[field] === true || product[field] === 1 || product[field] === '1' || product[field] === 'true';
+    }
     return null;
 }
 

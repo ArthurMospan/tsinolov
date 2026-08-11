@@ -1,6 +1,7 @@
 import { callMCPTool } from './mcp-direct';
 import { productAvailability } from './monitoring-favorites';
 import { productsFromSearchResponse } from './product-search';
+import { getSilpoProductSnapshot } from './silpo-public-catalog';
 import { parseMcpContent, type StoreContext } from './store-context';
 
 const detailsCache = new Map<string, { expiresAt: number; product: any }>();
@@ -33,6 +34,21 @@ function productId(product: any): string {
 
 function productTitle(product: any): string {
     return String(firstValue(product, ['title', 'name', 'productName', 'product_name']) || '').trim();
+}
+
+function needsProductSnapshot(product: any): boolean {
+    const hasDisplayQuantity = firstValue(product, [
+        // displayWeight/weightText from favorites are often the misleading
+        // generic "1 кг" / "1 шт" values we are replacing.
+        'displayRatio', 'display_ratio', 'packageSize', 'package_size',
+        'packSize', 'pack_size', 'netWeightText', 'net_weight_text',
+        'volumeText', 'volume_text',
+    ]) !== undefined;
+    const hasStock = firstValue(product, [
+        'stock', 'stockQuantity', 'stock_quantity', 'availableQuantity', 'available_quantity',
+        'inStock', 'in_stock', 'isAvailable', 'is_available',
+    ]) !== undefined;
+    return !hasDisplayQuantity || !hasStock;
 }
 
 export function matchingCatalogProduct(product: any, candidates: any[]): any | null {
@@ -180,6 +196,24 @@ export async function enrichProductsWithDetails(
             const index = cursor++;
             const original = products[index];
             try {
+                let snapshot: any | null = null;
+                if (needsProductSnapshot(original)) {
+                    try {
+                        snapshot = await getSilpoProductSnapshot(context, original);
+                    } catch (error) {
+                        console.warn(`[Silpo] Direct product snapshot unavailable for ${productSlug(original) || productExternalId(original) || 'unknown product'}:`, error);
+                    }
+                }
+
+                if (snapshot) {
+                    enriched[index] = {
+                        ...original,
+                        ...snapshot,
+                        storeAvailability: productAvailability(original),
+                    };
+                    continue;
+                }
+
                 // Favorites can omit slug/displayRatio even though the catalogue
                 // has them. Resolve the exact article first, then request details.
                 const resolved = await resolveCatalogProduct(token, context, original);

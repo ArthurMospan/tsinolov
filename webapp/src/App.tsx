@@ -360,9 +360,8 @@ function productAvailabilityValue(item: any): boolean | null {
 }
 
 function productPriceUnit(item: any): string | undefined {
-  const raw = item?.ratio ?? item?.priceRatio ?? item?.price_ratio
-    ?? item?.priceUnit ?? item?.price_unit ?? item?.sellingUnit ?? item?.selling_unit
-    ?? item?.displayRatio ?? item?.display_ratio;
+  const raw = item?.price_unit ?? item?.priceUnit ?? item?.displayRatio ?? item?.display_ratio
+    ?? item?.ratio ?? item?.priceRatio ?? item?.price_ratio ?? item?.sellingUnit ?? item?.selling_unit;
   const value = scalarText(raw).toLowerCase().replace(/\s+/g, '');
   if (!value) return undefined;
   const match = value.match(/^(\d+(?:[.,]\d+)?)?(кг|kg|кілограм(?:ів)?|г|gr|g|грам(?:ів)?|л|l|літр(?:ів)?|мл|ml|мілілітр(?:ів)?|шт|pcs?|piece|pieces|од)$/i);

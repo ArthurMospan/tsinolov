@@ -60,12 +60,13 @@ function measurementFromText(value: unknown): string | undefined {
 }
 
 export function productPriceUnit(product: any): string | undefined {
+    const displayRatio = measurementFromText(product?.displayRatio ?? product?.display_ratio);
+    if (displayRatio) return displayRatio;
     const ratio = product?.ratio ?? product?.priceRatio ?? product?.price_ratio
         ?? product?.priceUnit ?? product?.price_unit ?? product?.sellingUnit ?? product?.selling_unit;
     const unit = normalizedUnit(ratio);
     if (unit) return unit;
-    const displayRatio = measurementFromText(product?.displayRatio ?? product?.display_ratio);
-    return displayRatio;
+    return undefined;
 }
 
 export function productDisplayMeasurement(product: any): string | undefined {

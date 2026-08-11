@@ -10,7 +10,7 @@ test('uses Silpo display ratio for a weighted product instead of inventing one k
         weightText: '1 кг',
         addToBasketStep: 0.5,
         weighted: true,
-    }), { displayWeight: '100 г', price_unit: 'кг' });
+    }), { displayWeight: '100 г', price_unit: '100 г' });
 });
 
 test('shows one piece when a piece product has no package measurement', () => {

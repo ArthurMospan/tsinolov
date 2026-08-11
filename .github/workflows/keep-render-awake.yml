@@ -17,5 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      - name: Respect Kyiv quiet hours
+        id: schedule
+        env:
+          TZ: Europe/Kyiv
+        run: |
+          hour="$(date +%H)"
+          if [ "$hour" -ge 1 ] && [ "$hour" -lt 9 ]; then
+            echo "wake=false" >> "$GITHUB_OUTPUT"
+            echo "Quiet hours in Kyiv; Render will remain asleep."
+          else
+            echo "wake=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Wake and verify tracker
+        if: steps.schedule.outputs.wake == 'true'
         run: curl --fail --silent --show-error --retry 2 --retry-delay 10 --max-time 90 https://tsinolov.onrender.com/health

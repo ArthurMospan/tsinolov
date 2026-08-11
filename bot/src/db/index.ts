@@ -24,6 +24,7 @@ const schemaStatements = [
         monitor_branch_id TEXT,
         monitor_delivery_type TEXT,
         monitor_store_label TEXT,
+        monitor_context_source TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS user_settings (
@@ -126,7 +127,8 @@ async function bootstrap(): Promise<void> {
     for (const [column, type] of [
         ['monitor_branch_id', 'TEXT'],
         ['monitor_delivery_type', 'TEXT'],
-        ['monitor_store_label', 'TEXT']
+        ['monitor_store_label', 'TEXT'],
+        ['monitor_context_source', 'TEXT']
     ] as const) {
         try {
             await runSchemaStatement(`ALTER TABLE users ADD COLUMN ${column} ${type}`);

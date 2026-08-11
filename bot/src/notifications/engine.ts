@@ -126,7 +126,9 @@ function money(value: number): string {
 }
 
 function storeMessageSuffix(context: StoreContext): string {
-    return `\n\n${italic(`Ціни для магазину: ${context.storeLabel}`)}`;
+    const prefix = context.mode === 'pickup' ? 'Самовивіз' : 'Доставка';
+    const label = context.selectionRequired ? 'остання адреса в Сільпо' : context.contextLabel;
+    return `\n\n${italic(`${prefix}: ${label}`)}`;
 }
 
 function productImageUrl(product: any): string | undefined {

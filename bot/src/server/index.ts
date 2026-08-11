@@ -5,7 +5,15 @@ import path from 'path';
 import db from '../db/index';
 import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
 import { profileIdentityFromMcp } from '../api/mcp-profile';
-import { getStoreContext, listBranches, parseMcpContent, publicStoreLabel } from '../api/store-context';
+import {
+    fulfillmentMode,
+    getStoreContext,
+    listBranches,
+    parseMcpContent,
+    publicDeliveryAddressLabel,
+    publicStoreLabel,
+    type StoreContext,
+} from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites, productAvailability, productAvailabilityReason } from '../api/monitoring-favorites';
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
@@ -52,6 +60,207 @@ function deliveryTypeOrDefault(value: unknown): string {
     return normalized.startsWith('Delivery') || ['SelfPickup', 'JustIn', 'LongDelivery'].includes(normalized)
         ? normalized
         : 'DeliveryHome';
+}
+
+function savedAddressItems(response: any): any[] {
+    const root = firstMcpRoot(response);
+    if (Array.isArray(root)) return root;
+    if (Array.isArray(root?.items)) return root.items;
+    if (Array.isArray(root?.addresses)) return root.addresses;
+    if (Array.isArray(root?.data)) return root.data;
+    return [];
+}
+
+function coordinatesOf(value: any): { latitude: number; longitude: number } | null {
+    const latitudeValue = value?.latitude ?? value?.lat ?? value?.location?.latitude ?? value?.location?.lat
+        ?? value?.coordinates?.latitude ?? value?.coordinates?.lat ?? value?.position?.lat ?? value?.geo?.lat;
+    const longitudeValue = value?.longitude ?? value?.lng ?? value?.lon ?? value?.location?.longitude ?? value?.location?.lng ?? value?.location?.lon
+        ?? value?.coordinates?.longitude ?? value?.coordinates?.lng ?? value?.coordinates?.lon ?? value?.position?.lng ?? value?.position?.lon ?? value?.geo?.lng ?? value?.geo?.lon;
+    if (latitudeValue === undefined || latitudeValue === null || latitudeValue === ''
+        || longitudeValue === undefined || longitudeValue === null || longitudeValue === '') return null;
+    const latitude = Number(latitudeValue);
+    const longitude = Number(longitudeValue);
+    return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+}
+
+function isLikelyActiveAddress(address: any): boolean {
+    return [address?.isSelected, address?.selected, address?.isActive, address?.active, address?.isDefault]
+        .some(value => value === true || value === 1 || value === 'true');
+}
+
+const deliveryBranchCache = new Map<string, { expiresAt: number; branchId: string; deliveryType: string }>();
+
+async function deliveryOptionForAddress(token: string, address: any): Promise<any | null> {
+    const coordinates = coordinatesOf(address);
+    const addressLabel = publicDeliveryAddressLabel(address);
+    if (!coordinates || !addressLabel) return null;
+    const cacheKey = `${coordinates.latitude.toFixed(5)}:${coordinates.longitude.toFixed(5)}`;
+    let resolved = deliveryBranchCache.get(cacheKey);
+    if (!resolved || resolved.expiresAt <= Date.now()) {
+        const response = await callMCPTool(token, 'silpo_get_available_delivery_types', coordinates);
+        const root = firstMcpRoot(response);
+        const options = Array.isArray(root?.options) ? root.options : Array.isArray(root) ? root : [];
+        const option = options.find((item: any) => item?.deliveryType === 'DeliveryHome' && item?.branchId)
+            || options.find((item: any) => String(item?.deliveryType || '').startsWith('Delivery') && item?.branchId);
+        if (!option?.branchId) return null;
+        resolved = {
+            branchId: String(option.branchId),
+            deliveryType: deliveryTypeOrDefault(option.deliveryType),
+            expiresAt: Date.now() + 10 * 60 * 1000,
+        };
+        deliveryBranchCache.set(cacheKey, resolved);
+    }
+    return {
+        branchId: resolved.branchId,
+        deliveryType: resolved.deliveryType,
+        mode: 'delivery',
+        contextLabel: addressLabel,
+        storeLabel: addressLabel,
+        addressLabel,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        source: 'saved',
+        isLikelyActive: isLikelyActiveAddress(address),
+    };
+}
+
+async function savedDeliveryOptions(token: string, response?: any): Promise<any[]> {
+    const addressesResponse = response || await callMCPTool(token, 'silpo_get_my_delivery_addresses', {});
+    const addresses = savedAddressItems(addressesResponse).slice(0, 8);
+    return (await Promise.all(addresses.map(address => deliveryOptionForAddress(token, address).catch(() => null))))
+        .filter(Boolean);
+}
+
+async function getResolvedUserStoreContext(tgId: number, token: string): Promise<StoreContext> {
+    let context = await getUserStoreContext(tgId, token);
+    if (context.contextSource === 'silpo' && context.mode === 'delivery' && context.selectionRequired) {
+        context = withResolvedDeliveryAddress(context, await savedDeliveryOptions(token).catch(() => []));
+    }
+    return context;
+}
+
+function withResolvedDeliveryAddress(context: StoreContext, addresses: any[]): StoreContext {
+    if (context.mode !== 'delivery' || !context.selectionRequired) return context;
+    const matching = addresses.filter(option => option.branchId === context.branchId
+        && String(option.deliveryType).toLowerCase() === context.deliveryType.toLowerCase());
+    const address = matching.find(option => option.isLikelyActive) || (matching.length === 1 ? matching[0] : null);
+    if (!address) return context;
+    return {
+        ...context,
+        contextLabel: address.addressLabel,
+        storeLabel: address.addressLabel,
+        selectionRequired: false,
+    };
+}
+
+function normalizedContextLabel(value: unknown): string {
+    return String(value || '')
+        .toLocaleLowerCase('uk-UA')
+        .replace(/^(дім|робота|домівка|офіс)\s*[·:—-]\s*/u, '')
+        .replace(/[.,]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function selectionMatchesCart(selected: StoreContext, cart: StoreContext): boolean {
+    if (selected.branchId !== cart.branchId
+        || selected.deliveryType.toLowerCase() !== cart.deliveryType.toLowerCase()) return false;
+    if (selected.mode !== 'delivery' || selected.contextSource !== 'manual') return true;
+    if (cart.selectionRequired) return false;
+    const selectedLabel = normalizedContextLabel(selected.contextLabel);
+    const cartLabel = normalizedContextLabel(cart.contextLabel);
+    return selectedLabel === cartLabel || selectedLabel.endsWith(cartLabel) || cartLabel.endsWith(selectedLabel);
+}
+
+const geocodeCache = new Map<string, { expiresAt: number; items: any[] }>();
+let geocodeQueue: Promise<void> = Promise.resolve();
+let nextGeocodeRequestAt = 0;
+
+function geocodedAddressLabel(item: any): string {
+    const address = item?.address || {};
+    const city = String(address.city || address.town || address.village || address.municipality || '').trim();
+    const street = String(address.road || address.pedestrian || address.neighbourhood || address.suburb || '').trim();
+    const building = String(address.house_number || '').trim();
+    return [city, [street, building].filter(Boolean).join(', ')].filter(Boolean).join(', ')
+        || String(item?.display_name || '').split(',').slice(0, 4).join(',').trim();
+}
+
+async function geocodeAddresses(query: string): Promise<any[]> {
+    const normalized = query.trim().toLocaleLowerCase('uk-UA');
+    const cached = geocodeCache.get(normalized);
+    if (cached && cached.expiresAt > Date.now()) return cached.items;
+
+    let releaseQueue!: () => void;
+    const previousRequest = geocodeQueue;
+    geocodeQueue = new Promise<void>(resolve => { releaseQueue = resolve; });
+    await previousRequest;
+    try {
+        const refreshedCache = geocodeCache.get(normalized);
+        if (refreshedCache && refreshedCache.expiresAt > Date.now()) return refreshedCache.items;
+        const delay = Math.max(0, nextGeocodeRequestAt - Date.now());
+        if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+        nextGeocodeRequestAt = Date.now() + 1100;
+
+        const params = new URLSearchParams({
+            q: query,
+            format: 'jsonv2',
+            addressdetails: '1',
+            countrycodes: 'ua',
+            limit: '6',
+            'accept-language': 'uk',
+        });
+        const baseUrl = process.env.GEOCODER_BASE_URL || 'https://nominatim.openstreetmap.org';
+        const response = await fetch(`${baseUrl.replace(/\/$/, '')}/search?${params}`, {
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': `Tsinolov/1.0 (${process.env.WEBAPP_URL || 'https://tsinolov.onrender.com'})`,
+            },
+        });
+        if (!response.ok) throw new Error(`Address search failed with ${response.status}`);
+        const data = await response.json();
+        const items = (Array.isArray(data) ? data : []).map((item: any) => ({
+            mode: 'delivery',
+            contextLabel: geocodedAddressLabel(item),
+            storeLabel: geocodedAddressLabel(item),
+            addressLabel: geocodedAddressLabel(item),
+            latitude: Number(item?.lat),
+            longitude: Number(item?.lon),
+            source: 'search',
+        })).filter((item: any) => item.addressLabel && Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
+        geocodeCache.set(normalized, { expiresAt: Date.now() + 10 * 60 * 1000, items });
+        return items;
+    } finally {
+        releaseQueue();
+    }
+}
+
+function distanceKm(from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }): number {
+    const radius = 6371;
+    const radians = (degrees: number) => degrees * Math.PI / 180;
+    const latitudeDelta = radians(to.latitude - from.latitude);
+    const longitudeDelta = radians(to.longitude - from.longitude);
+    const a = Math.sin(latitudeDelta / 2) ** 2
+        + Math.cos(radians(from.latitude)) * Math.cos(radians(to.latitude)) * Math.sin(longitudeDelta / 2) ** 2;
+    return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function pickupOption(branch: any, origin?: { latitude: number; longitude: number }): any | null {
+    const branchId = String(branch?.branchId || branch?.id || '');
+    if (!branchId) return null;
+    const coordinates = coordinatesOf(branch);
+    return {
+        branchId,
+        deliveryType: 'SelfPickup',
+        mode: 'pickup',
+        contextLabel: publicStoreLabel(branch),
+        storeLabel: publicStoreLabel(branch),
+        city: String(branch?.city || branch?.cityFull || branch?.locality || ''),
+        address: String(branch?.address || branch?.addressFull || branch?.streetAddress || ''),
+        latitude: coordinates?.latitude,
+        longitude: coordinates?.longitude,
+        distanceKm: origin && coordinates ? Number(distanceKm(origin, coordinates).toFixed(1)) : undefined,
+        isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
+    };
 }
 
 // ── Helper: PKCE ────────────────────────────────────────────────────
@@ -187,8 +396,9 @@ app.get('/api/user/profile', async (req, res) => {
             console.warn('[MCP] Profile identity unavailable, using Telegram fallback:', error);
         }
 
-        // 2. Resolve the active cart's public store. Never expose the user's delivery address.
-        const store = await getUserStoreContext(tgId, token);
+        // 2. Resolve the user's delivery address or physical pickup store.
+        // A fulfillment branch remains an internal pricing detail for delivery.
+        const store = await getResolvedUserStoreContext(tgId, token);
         res.json({ authenticated: true, name, avatar, ...store, checkedAt: new Date().toISOString() });
     } catch (err) {
         console.error('[MCP] Store context fetch failed:', err);
@@ -217,7 +427,7 @@ app.get('/api/favorites', async (req, res) => {
     }
 
     try {
-        const context = await getUserStoreContext(tgId, token);
+        const context = await getResolvedUserStoreContext(tgId, token);
         const monitoring = await getMonitoringFavorites(token, context);
         let favorites = await enrichProductsWithDetails(token, context, monitoring.products, {
             authoritativeAvailability: true,
@@ -437,7 +647,7 @@ app.post('/api/settings', async (req, res) => {
     res.json({ success: true });
 });
 
-// ── API: Monitoring store selection ─────────────────────────────────
+// ── API: Delivery address and pickup selection ──────────────────────
 app.get('/api/stores/options', async (req, res) => {
     const tgId = Number(req.query.tg_id);
     if (!tgId) return res.status(400).json({ error: 'Missing tg_id' });
@@ -445,56 +655,44 @@ app.get('/api/stores/options', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-        const [current, accountDefault, ordersResponse, addressesResponse] = await Promise.all([
+        const [currentRaw, accountDefaultRaw, ordersResponse, addressesResponse] = await Promise.all([
             getUserStoreContext(tgId, token),
             getStoreContext(token),
             callMCPTool(token, 'silpo_get_my_online_orders', { limit: 10, offset: 0 }).catch(() => null),
             callMCPTool(token, 'silpo_get_my_delivery_addresses', {}).catch(() => null),
         ]);
 
+        const addresses = addressesResponse ? await savedDeliveryOptions(token, addressesResponse) : [];
+        const accountDefault = withResolvedDeliveryAddress(accountDefaultRaw, addresses);
+        const current = currentRaw.contextSource === 'silpo'
+            ? withResolvedDeliveryAddress(currentRaw, addresses)
+            : currentRaw;
+
         const ordersRoot = ordersResponse ? firstMcpRoot(ordersResponse) : {};
         const orders = Array.isArray(ordersRoot?.orders) ? ordersRoot.orders : [];
         const recentSeeds = new Map<string, { branchId: string; deliveryType: string }>();
         for (const order of orders) {
+            const deliveryType = deliveryTypeOrDefault(order?.delivery?.type || order?.deliveryType);
+            if (fulfillmentMode(deliveryType) !== 'pickup') continue;
             const product = Array.isArray(order?.products) ? order.products.find((item: any) => item?.branchId) : null;
             const branchId = String(product?.branchId || order?.branchId || '');
             if (!branchId || recentSeeds.has(branchId)) continue;
-            recentSeeds.set(branchId, { branchId, deliveryType: deliveryTypeOrDefault(order?.delivery?.type) });
+            recentSeeds.set(branchId, { branchId, deliveryType });
             if (recentSeeds.size >= 4) break;
         }
         const recent = await Promise.all([...recentSeeds.values()].map(seed => getStoreContext(token, seed)));
 
-        const addressesRoot = addressesResponse ? firstMcpRoot(addressesResponse) : {};
-        const savedAddresses = Array.isArray(addressesRoot)
-            ? addressesRoot
-            : addressesRoot?.items || addressesRoot?.addresses || addressesRoot?.data || [];
-        const addressOptions = (await Promise.all(savedAddresses.slice(0, 6).map(async (address: any) => {
-            const latitude = Number(address?.latitude);
-            const longitude = Number(address?.longitude);
-            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-            const response = await callMCPTool(token, 'silpo_get_available_delivery_types', { latitude, longitude });
-            const root = firstMcpRoot(response);
-            const option = Array.isArray(root?.options)
-                ? root.options.find((item: any) => item?.deliveryType === 'DeliveryHome' && item?.branchId)
-                : null;
-            if (!option?.branchId) return null;
-            const store = await getStoreContext(token, { branchId: String(option.branchId), deliveryType: 'DeliveryHome' });
-            return {
-                ...store,
-                addressLabel: [address?.tag, address?.city, address?.street, address?.building].filter(Boolean).join(' · '),
-            };
-        }))).filter(Boolean);
-
-        res.json({ current, accountDefault, recent, addresses: addressOptions });
+        res.json({ current, accountDefault, recent, addresses });
     } catch (error) {
-        console.error('[Stores] Failed to load options:', error);
-        res.status(502).json({ error: 'Failed to load store options' });
+        console.error('[Fulfillment] Failed to load options:', error);
+        res.status(502).json({ error: 'Failed to load fulfillment options' });
     }
 });
 
 app.get('/api/stores/search', async (req, res) => {
     const tgId = Number(req.query.tg_id);
-    const query = String(req.query.q || '').trim().toLocaleLowerCase('uk-UA');
+    const rawQuery = String(req.query.q || '').trim();
+    const query = rawQuery.toLocaleLowerCase('uk-UA');
     if (!tgId || query.length < 2) return res.json({ stores: [] });
     const token = await tokenForUser(tgId);
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -503,15 +701,17 @@ app.get('/api/stores/search', async (req, res) => {
         const pickupBranches = branches.some(branch => branch?.hasPickup === true)
             ? branches.filter(branch => branch?.hasPickup === true)
             : branches;
-        const stores = pickupBranches
-            .map(branch => ({
-                branchId: String(branch?.branchId || branch?.id || ''),
-                deliveryType: 'SelfPickup',
-                storeLabel: publicStoreLabel(branch),
-                city: String(branch?.city || branch?.cityFull || branch?.locality || ''),
-                address: String(branch?.address || branch?.addressFull || branch?.streetAddress || ''),
-            }))
-            .filter(store => store.branchId && `${store.city} ${store.address} ${store.storeLabel}`.toLocaleLowerCase('uk-UA').includes(query))
+        const geocoded = rawQuery.length >= 3 ? await geocodeAddresses(rawQuery).catch(() => []) : [];
+        const origin = geocoded[0] ? { latitude: geocoded[0].latitude, longitude: geocoded[0].longitude } : undefined;
+        const stores = pickupBranches.map(branch => pickupOption(branch, origin)).filter(Boolean)
+            .filter((store: any) => {
+                if (origin && Number.isFinite(store.distanceKm)) return true;
+                return `${store.city} ${store.address} ${store.storeLabel}`.toLocaleLowerCase('uk-UA').includes(query);
+            })
+            .sort((left: any, right: any) => {
+                if (origin) return (left.distanceKm ?? Number.MAX_VALUE) - (right.distanceKm ?? Number.MAX_VALUE);
+                return left.storeLabel.localeCompare(right.storeLabel, 'uk-UA');
+            })
             .slice(0, 20);
         res.json({ stores });
     } catch (error) {
@@ -520,29 +720,90 @@ app.get('/api/stores/search', async (req, res) => {
     }
 });
 
-app.post('/api/stores/select', async (req, res) => {
-    const tgId = Number(req.body.tg_id);
-    const branchId = String(req.body.branchId || '');
-    const deliveryType = deliveryTypeOrDefault(req.body.deliveryType || 'SelfPickup');
-    if (!tgId || !branchId) return res.status(400).json({ error: 'Missing store parameters' });
+app.get('/api/stores/nearby', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    const origin = coordinatesOf({ latitude: req.query.latitude, longitude: req.query.longitude });
+    if (!tgId || !origin) return res.status(400).json({ error: 'Missing location' });
     const token = await tokenForUser(tgId);
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     try {
-        const accountDefault = await getStoreContext(token);
-        if (accountDefault.branchId === branchId && accountDefault.deliveryType.toLowerCase() === deliveryType.toLowerCase()) {
+        const branches = await listBranches(token);
+        const pickupBranches = branches.some(branch => branch?.hasPickup === true)
+            ? branches.filter(branch => branch?.hasPickup === true)
+            : branches;
+        const stores = pickupBranches.map(branch => pickupOption(branch, origin)).filter(Boolean)
+            .filter((store: any) => Number.isFinite(store.distanceKm))
+            .sort((left: any, right: any) => left.distanceKm - right.distanceKm)
+            .slice(0, 20);
+        res.json({ stores });
+    } catch (error) {
+        console.error('[Stores] Nearby lookup failed:', error);
+        res.status(502).json({ error: 'Nearby store lookup failed' });
+    }
+});
+
+app.get('/api/addresses/search', async (req, res) => {
+    const tgId = Number(req.query.tg_id);
+    const query = String(req.query.q || '').trim();
+    if (!tgId || query.length < 3) return res.json({ addresses: [] });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        res.json({ addresses: await geocodeAddresses(query) });
+    } catch (error) {
+        console.error('[Addresses] Search failed:', error);
+        res.status(502).json({ error: 'Address search failed' });
+    }
+});
+
+app.post('/api/stores/select', async (req, res) => {
+    const tgId = Number(req.body.tg_id);
+    if (!tgId) return res.status(400).json({ error: 'Missing user' });
+    const token = await tokenForUser(tgId);
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        if (req.body.source === 'silpo') {
             await db.prepare(`
-                UPDATE users SET monitor_branch_id = NULL, monitor_delivery_type = NULL, monitor_store_label = NULL WHERE tg_id = ?
+                UPDATE users SET monitor_branch_id = NULL, monitor_delivery_type = NULL,
+                    monitor_store_label = NULL, monitor_context_source = NULL WHERE tg_id = ?
             `).run(tgId);
-            return res.json({ success: true, store: accountDefault });
+            return res.json({ success: true, store: await getStoreContext(token) });
         }
-        const context = await getStoreContext(token, { branchId, deliveryType });
+
+        const mode = req.body.mode === 'pickup' ? 'pickup' : 'delivery';
+        const contextLabel = String(req.body.contextLabel || req.body.addressLabel || '').trim();
+        let branchId = String(req.body.branchId || '');
+        let deliveryType = mode === 'pickup' ? 'SelfPickup' : 'DeliveryHome';
+        const requestedCoordinates = coordinatesOf(req.body);
+
+        if (mode === 'delivery' && requestedCoordinates) {
+            const response = await callMCPTool(token, 'silpo_get_available_delivery_types', {
+                latitude: requestedCoordinates.latitude,
+                longitude: requestedCoordinates.longitude,
+            });
+            const root = firstMcpRoot(response);
+            const options = Array.isArray(root?.options) ? root.options : Array.isArray(root) ? root : [];
+            const option = options.find((item: any) => item?.deliveryType === 'DeliveryHome' && item?.branchId)
+                || options.find((item: any) => String(item?.deliveryType || '').startsWith('Delivery') && item?.branchId);
+            if (!option?.branchId) {
+                return res.status(422).json({ error: 'DELIVERY_UNAVAILABLE' });
+            }
+            branchId = String(option.branchId);
+            deliveryType = deliveryTypeOrDefault(option.deliveryType);
+        }
+
+        if (!branchId || (mode === 'delivery' && !contextLabel)) {
+            return res.status(400).json({ error: 'Missing fulfillment parameters' });
+        }
+        const context = await getStoreContext(token, { branchId, deliveryType, storeLabel: contextLabel });
         await db.prepare(`
-            UPDATE users SET monitor_branch_id = ?, monitor_delivery_type = ?, monitor_store_label = ? WHERE tg_id = ?
-        `).run(context.branchId, context.deliveryType, context.storeLabel, tgId);
+            UPDATE users SET monitor_branch_id = ?, monitor_delivery_type = ?, monitor_store_label = ?,
+                monitor_context_source = 'manual' WHERE tg_id = ?
+        `).run(context.branchId, context.deliveryType, context.contextLabel, tgId);
         res.json({ success: true, store: context });
     } catch (error) {
-        console.error('[Stores] Selection failed:', error);
-        res.status(502).json({ error: 'Store selection failed' });
+        console.error('[Fulfillment] Selection failed:', error);
+        res.status(502).json({ error: 'Fulfillment selection failed' });
     }
 });
 
@@ -610,8 +871,8 @@ app.post('/api/favorites/target', async (req, res) => {
 
 // API: Add a favorite product to the Silpo cart
 app.post('/api/cart/add', async (req, res) => {
-    const { tg_id, product_id, companyId, branchId, quantity = 1 } = req.body;
-    if (!tg_id || !product_id || !companyId || !branchId) {
+    const { tg_id, product_id, companyId, quantity = 1 } = req.body;
+    if (!tg_id || !product_id || !companyId) {
         return res.status(400).json({ error: 'Missing parameters' });
     }
 
@@ -627,6 +888,14 @@ app.post('/api/cart/add', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
+        const selectedContext = await getUserStoreContext(Number(tg_id), token);
+        let cartContext = await getStoreContext(token);
+        if (cartContext.mode === 'delivery' && cartContext.selectionRequired) {
+            cartContext = withResolvedDeliveryAddress(cartContext, await savedDeliveryOptions(token).catch(() => []));
+        }
+        if (!selectionMatchesCart(selectedContext, cartContext)) {
+            return res.status(409).json({ error: 'CONTEXT_MISMATCH' });
+        }
         const cartResponse = await callMCPTool(token, 'silpo_get_my_shopping_cart');
         let shoppingCartId: string | undefined;
         for (const item of cartResponse?.result?.content || []) {
@@ -643,7 +912,7 @@ app.post('/api/cart/add', async (req, res) => {
             products: [{
                 productId: String(product_id),
                 companyId: String(companyId),
-                branchId: String(branchId),
+                branchId: selectedContext.branchId,
                 quantity: Number(quantity) > 0 ? Number(quantity) : 1,
                 addQuantity: true
             }]

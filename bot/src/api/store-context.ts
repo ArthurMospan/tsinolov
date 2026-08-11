@@ -3,6 +3,10 @@ import { callMCPTool } from './mcp-direct';
 export interface StoreContext {
     branchId: string;
     deliveryType: string;
+    mode: 'delivery' | 'pickup';
+    contextLabel: string;
+    contextSource: 'silpo' | 'manual';
+    selectionRequired: boolean;
     city: string;
     address: string;
     storeLabel: string;
@@ -50,6 +54,53 @@ export function publicStoreLabel(branch: any): string {
     const city = String(branch?.city || branch?.cityFull || branch?.locality || '').trim();
     const address = String(branch?.address || branch?.addressFull || branch?.streetAddress || '').trim();
     return [city, address].filter(Boolean).join(', ') || 'Магазин Сільпо за замовчуванням';
+}
+
+export function fulfillmentMode(deliveryType: unknown): 'delivery' | 'pickup' {
+    const normalized = String(deliveryType || '').toLocaleLowerCase('uk-UA');
+    return normalized.includes('pickup') || normalized.includes('самовив') ? 'pickup' : 'delivery';
+}
+
+export function publicDeliveryAddressLabel(address: any): string {
+    if (typeof address === 'string') return address.trim();
+    if (!address || typeof address !== 'object') return '';
+
+    const direct = [address.formattedAddress, address.fullAddress, address.addressLine, address.displayName, address.address]
+        .find(value => typeof value === 'string' && value.trim())?.trim() || '';
+    if (direct) return direct;
+
+    const tag = String(address.tag || address.title || address.label || '').trim();
+    const city = String(address.city || address.cityName || address.locality || '').trim();
+    const street = String(address.street || address.streetName || '').trim();
+    const building = String(address.building || address.house || address.houseNumber || '').trim();
+    const apartment = String(address.apartment || address.flat || '').trim();
+    const streetLine = [street, building].filter(Boolean).join(', ');
+    const addressLine = [city, streetLine].filter(Boolean).join(', ');
+    const apartmentLine = apartment ? `кв. ${apartment}` : '';
+    return [tag, addressLine, apartmentLine].filter(Boolean).join(' · ');
+}
+
+function activeDeliveryAddress(details: any, cart: any): string {
+    const shipment = Array.isArray(cart?.shipments) ? cart.shipments[0] : undefined;
+    const shipmentDelivery = shipment?.delivery;
+    const delivery = cart?.delivery || details?.delivery;
+    const candidates = [
+        cart?.deliveryAddress,
+        details?.deliveryAddress,
+        shipment?.deliveryAddress,
+        shipment?.recipientAddress,
+        shipmentDelivery?.deliveryAddress,
+        shipmentDelivery?.address,
+        delivery?.deliveryAddress,
+        delivery?.address,
+        cart?.customerAddress,
+        details?.customerAddress,
+    ];
+    for (const candidate of candidates) {
+        const label = publicDeliveryAddressLabel(candidate);
+        if (label) return label;
+    }
+    return '';
 }
 
 function normalizedLocation(value: unknown): string {
@@ -123,15 +174,21 @@ export async function getStoreContext(token: string, preference?: StorePreferenc
             branch = preferredPickupBranch(branch, await listBranches(token));
         }
         const branchId = branchIdOf(branch) || preference.branchId;
+        const mode = fulfillmentMode(preference.deliveryType);
+        const contextLabel = mode === 'pickup'
+            ? publicStoreLabel(branch)
+            : String(preference.storeLabel || '').trim() || 'Оберіть адресу доставки';
         return {
             branchId,
             deliveryType: preference.deliveryType || 'SelfPickup',
-            city: branchCity(branch),
-            address: branchAddress(branch),
-            storeLabel: publicStoreLabel(branch) !== 'Магазин Сільпо за замовчуванням'
-                ? publicStoreLabel(branch)
-                : preference.storeLabel || 'Вибраний магазин Сільпо',
-            isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
+            mode,
+            contextLabel,
+            contextSource: 'manual',
+            selectionRequired: mode === 'delivery' && !String(preference.storeLabel || '').trim(),
+            city: mode === 'pickup' ? branchCity(branch) : '',
+            address: mode === 'pickup' ? branchAddress(branch) : '',
+            storeLabel: contextLabel,
+            isOpen: mode === 'pickup' && typeof branch?.open === 'boolean' ? branch.open : null,
             orderMinimum: null,
             deliveryPrice: null,
             deliveryTemporarilyUnavailable: null,
@@ -166,14 +223,23 @@ export async function getStoreContext(token: string, preference?: StorePreferenc
     const minimumValidation = validations.find((validation: any) => Number(validation?.context?.orderCostMin) > 0);
     const delivery = calculation?.delivery || {};
     const express = delivery?.deliveryExpressByPromise || {};
+    const mode = fulfillmentMode(deliveryType);
+    const deliveryAddress = mode === 'delivery' ? activeDeliveryAddress(details, cart) : '';
+    const contextLabel = mode === 'delivery'
+        ? deliveryAddress || 'Оберіть адресу доставки'
+        : publicStoreLabel(branch);
 
     return {
         branchId,
         deliveryType,
-        city: branchCity(branch),
-        address: branchAddress(branch),
-        storeLabel: publicStoreLabel(branch),
-        isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
+        mode,
+        contextLabel,
+        contextSource: 'silpo',
+        selectionRequired: mode === 'delivery' && !deliveryAddress,
+        city: mode === 'pickup' ? branchCity(branch) : '',
+        address: mode === 'pickup' ? branchAddress(branch) : '',
+        storeLabel: contextLabel,
+        isOpen: mode === 'pickup' && typeof branch?.open === 'boolean' ? branch.open : null,
         orderMinimum: Number(minimumValidation?.context?.orderCostMin) || null,
         deliveryPrice: Number(delivery?.total) || Number(express?.price) || null,
         deliveryTemporarilyUnavailable: typeof express?.isTemporarilyUnavailable === 'boolean'

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { preferredPickupBranch, publicStoreLabel, sameStoreContext } from './store-context';
+import {
+    fulfillmentMode,
+    preferredPickupBranch,
+    publicDeliveryAddressLabel,
+    publicStoreLabel,
+    sameStoreContext,
+} from './store-context';
 
 test('builds a public store label without using a delivery address', () => {
     assert.equal(
@@ -12,6 +18,21 @@ test('builds a public store label without using a delivery address', () => {
 test('reads the current Silpo branch field names', () => {
     assert.equal(publicStoreLabel({ cityFull: 'Софіївська Борщагівка', addressFull: 'вул. Київська, 1/102' }),
         'Софіївська Борщагівка, вул. Київська, 1/102');
+});
+
+test('formats a user delivery address separately from a fulfillment branch', () => {
+    assert.equal(publicDeliveryAddressLabel({
+        tag: 'Дім',
+        city: 'Київ',
+        street: 'вул. Липківського',
+        building: '15',
+        apartment: '8',
+    }), 'Дім · Київ, вул. Липківського, 15 · кв. 8');
+});
+
+test('separates delivery from physical pickup', () => {
+    assert.equal(fulfillmentMode('DeliveryHome'), 'delivery');
+    assert.equal(fulfillmentMode('SelfPickup'), 'pickup');
 });
 
 test('prefers the pickup branch when Silpo has two branches at one address', () => {

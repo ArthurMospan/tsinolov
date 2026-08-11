@@ -2,7 +2,7 @@ import { Telegraf, Markup } from 'telegraf';
 import dotenv from 'dotenv';
 import db from '../db/index';
 import { callMCPTool } from '../api/mcp-direct';
-import { parseMcpContent } from '../api/store-context';
+import { getStoreContext, parseMcpContent } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { startServer } from '../server/index';
 import { runChecker, startChecker } from './checker';
@@ -109,6 +109,11 @@ bot.action(/^cart:([a-f0-9]{16})$/, async (ctx) => {
         const user = await db.prepare('SELECT mcp_token FROM users WHERE tg_id = ?').get(tgId) as any;
         if (!user?.mcp_token) throw new Error('Silpo account is not connected');
         const context = await getUserStoreContext(tgId, String(user.mcp_token));
+        const cartContext = await getStoreContext(String(user.mcp_token));
+        if (context.branchId !== cartContext.branchId
+            || context.deliveryType.toLowerCase() !== cartContext.deliveryType.toLowerCase()) {
+            throw new Error('CONTEXT_MISMATCH');
+        }
         const cartResponse = await callMCPTool(String(user.mcp_token), 'silpo_get_my_shopping_cart');
         const shoppingCartId = shoppingCartIdFrom(parseMcpContent(cartResponse));
         if (!shoppingCartId) throw new Error('MCP did not return shopping cart id');
@@ -129,7 +134,9 @@ bot.action(/^cart:([a-f0-9]{16})$/, async (ctx) => {
         }).catch(() => undefined);
     } catch (error) {
         console.error('[Telegram] Failed to add notification product to cart:', error);
-        await ctx.reply('Не вдалося додати товар у кошик. Спробуйте ще раз трохи пізніше.');
+        await ctx.reply(error instanceof Error && error.message === 'CONTEXT_MISMATCH'
+            ? 'У Сільпо зараз вибрана інша адреса або магазин. Змініть спосіб отримання в Сільпо й спробуйте ще раз.'
+            : 'Не вдалося додати товар у кошик. Спробуйте ще раз трохи пізніше.');
     }
 });
 

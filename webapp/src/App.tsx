@@ -6,9 +6,11 @@ import {
   ChevronDown,
   ChevronRight,
   Heart,
+  Home,
   Link2,
   LogOut,
   MapPin,
+  Navigation,
   Package,
   Plus,
   Search,
@@ -113,6 +115,10 @@ interface UserProfile {
   avatar: string;
   branchId: string;
   deliveryType: string;
+  mode: 'delivery' | 'pickup';
+  contextLabel: string;
+  contextSource: 'silpo' | 'manual';
+  selectionRequired: boolean;
   city: string;
   address: string;
   storeLabel: string;
@@ -124,12 +130,21 @@ interface UserProfile {
 }
 
 interface StoreOption {
-  branchId: string;
-  deliveryType: string;
+  branchId?: string;
+  deliveryType?: string;
+  mode: 'delivery' | 'pickup';
+  contextLabel: string;
   storeLabel: string;
+  contextSource?: 'silpo' | 'manual';
+  source?: 'silpo' | 'saved' | 'search';
   city?: string;
   address?: string;
   addressLabel?: string;
+  latitude?: number;
+  longitude?: number;
+  distanceKm?: number;
+  isOpen?: boolean | null;
+  selectionRequired?: boolean;
 }
 
 interface StoreOptions {
@@ -499,13 +514,6 @@ function productUrl(product: Product): string | undefined {
   return product.slug ? `https://silpo.ua/product/${product.slug}` : undefined;
 }
 
-function deliveryLabel(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (normalized.includes('pickup') || normalized.includes('самовив')) return 'Самовивіз';
-  if (normalized.includes('delivery') || normalized.includes('достав')) return 'Доставка';
-  return value || 'Сільпо';
-}
-
 function updatedLabel(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return 'Оновлено щойно';
@@ -532,10 +540,15 @@ function App() {
   const [onboardingDraft, setOnboardingDraft] = useState<Settings>(RECOMMENDED_SETTINGS);
   const [savingOnboarding, setSavingOnboarding] = useState(false);
   const [storePickerOpen, setStorePickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'delivery' | 'pickup'>('delivery');
   const [storeOptions, setStoreOptions] = useState<StoreOptions | null>(null);
   const [storeSearch, setStoreSearch] = useState('');
   const [storeSearchResults, setStoreSearchResults] = useState<StoreOption[]>([]);
+  const [storeSearchLoading, setStoreSearchLoading] = useState(false);
+  const [storeSearchPerformed, setStoreSearchPerformed] = useState(false);
   const [storeLoading, setStoreLoading] = useState(false);
+  const [nearbyLoading, setNearbyLoading] = useState(false);
+  const [showingNearby, setShowingNearby] = useState(false);
   const [addingDealBasket, setAddingDealBasket] = useState(false);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
@@ -596,9 +609,13 @@ function App() {
         ...profile,
         name: String(telegram.name || profile.name || 'Мій акаунт'),
         avatar: String(profile.avatar || telegram.avatar || ''),
+        mode: profile.mode === 'pickup' ? 'pickup' : 'delivery',
+        contextLabel: String(profile.contextLabel || profile.storeLabel || 'Оберіть адресу доставки'),
+        contextSource: profile.contextSource === 'manual' ? 'manual' : 'silpo',
+        selectionRequired: booleanValue(profile.selectionRequired, false),
         city: String(profile.city || ''),
         address: String(profile.address || ''),
-        storeLabel: String(profile.storeLabel || 'Магазин Сільпо за замовчуванням'),
+        storeLabel: String(profile.contextLabel || profile.storeLabel || 'Оберіть адресу доставки'),
         isOpen: typeof profile.isOpen === 'boolean' ? profile.isOpen : null,
         orderMinimum: numberValue(profile.orderMinimum) || null,
         deliveryPrice: numberValue(profile.deliveryPrice) || null,
@@ -619,10 +636,11 @@ function App() {
 
       const storeStorageKey = `${ACTIVE_STORE_STORAGE_KEY}_${tgId}`;
       const previousStore = window.localStorage.getItem(storeStorageKey);
-      if (previousStore && previousStore !== normalizedProfile.branchId) {
-        window.setTimeout(() => showToast('Магазин змінився — ціни перебазовано без хибних сповіщень'), 150);
+      const currentContextKey = `${normalizedProfile.branchId}:${normalizedProfile.deliveryType}`;
+      if (previousStore && previousStore !== currentContextKey) {
+        window.setTimeout(() => showToast('Адреса або спосіб отримання змінилися — ціни оновлено'), 150);
       }
-      window.localStorage.setItem(storeStorageKey, normalizedProfile.branchId);
+      window.localStorage.setItem(storeStorageKey, currentContextKey);
 
       const favoritesResponse = await apiFetch(`${API_URL}/api/favorites?tg_id=${tgId}`);
       if (!favoritesResponse.ok) throw new Error('Favorites unavailable');
@@ -741,29 +759,6 @@ function App() {
       root.style.removeProperty('--tg-runtime-content-safe-bottom');
     };
   }, [loadData, tgId]);
-
-  useEffect(() => {
-    if (!storePickerOpen || storeSearch.trim().length < 2) {
-      setStoreSearchResults([]);
-      return;
-    }
-    let cancelled = false;
-    const timeout = window.setTimeout(async () => {
-      try {
-        const response = await apiFetch(`${API_URL}/api/stores/search?tg_id=${tgId}&q=${encodeURIComponent(storeSearch.trim())}`);
-        if (!response.ok) throw new Error('Store search failed');
-        const result = await response.json();
-        if (!cancelled) setStoreSearchResults(Array.isArray(result.stores) ? result.stores : []);
-      } catch (error) {
-        console.error('[Mini App] Store search failed:', error);
-        if (!cancelled) setStoreSearchResults([]);
-      }
-    }, 350);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [storePickerOpen, storeSearch, tgId]);
 
   useEffect(() => {
     const query = productSearch.trim();
@@ -902,16 +897,23 @@ function App() {
 
   const openStorePicker = async () => {
     setStorePickerOpen(true);
+    setPickerMode(userProfile?.mode === 'pickup' ? 'pickup' : 'delivery');
+    setShowingNearby(false);
+    setStoreSearchPerformed(false);
     setStoreSearch('');
     setStoreSearchResults([]);
     setStoreLoading(true);
     try {
       const response = await apiFetch(`${API_URL}/api/stores/options?tg_id=${tgId}`);
       if (!response.ok) throw new Error('Store options failed');
-      setStoreOptions(await response.json());
+      const options = await response.json();
+      setStoreOptions(options);
+      if (options?.current?.mode === 'pickup' || options?.current?.mode === 'delivery') {
+        setPickerMode(options.current.mode);
+      }
     } catch (error) {
-      console.error('[Mini App] Failed to load store options:', error);
-      showToast('Не вдалося завантажити магазини');
+      console.error('[Mini App] Failed to load fulfillment options:', error);
+      showToast('Не вдалося завантажити адреси та магазини');
     } finally {
       setStoreLoading(false);
     }
@@ -920,24 +922,103 @@ function App() {
   const selectStore = async (store: StoreOption) => {
     setStoreLoading(true);
     try {
+      const payload = store.source === 'silpo'
+        ? { tg_id: tgId, source: 'silpo' }
+        : {
+            tg_id: tgId,
+            mode: store.mode,
+            branchId: store.branchId,
+            deliveryType: store.deliveryType,
+            contextLabel: store.contextLabel || store.addressLabel || store.storeLabel,
+            latitude: store.latitude,
+            longitude: store.longitude,
+          };
       const response = await apiFetch(`${API_URL}/api/stores/select`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tg_id: tgId, branchId: store.branchId, deliveryType: store.deliveryType }),
+        body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error('Store selection failed');
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        if (result.error === 'DELIVERY_UNAVAILABLE') {
+          showToast('За цією адресою доставка Сільпо поки недоступна');
+          return;
+        }
+        throw new Error('Fulfillment selection failed');
+      }
       setStorePickerOpen(false);
       setProductSearchOpen(false);
       setStoreOptions(null);
       setActiveTab('favorites');
-      showToast('Магазин змінено — ціни перераховуються');
+      showToast(store.mode === 'pickup'
+        ? 'Магазин для самовивозу змінено — ціни оновлюються'
+        : 'Адресу доставки змінено — ціни оновлюються');
       await loadData();
     } catch (error) {
-      console.error('[Mini App] Failed to select store:', error);
-      showToast('Не вдалося змінити магазин');
+      console.error('[Mini App] Failed to select fulfillment:', error);
+      showToast('Не вдалося змінити спосіб отримання');
     } finally {
       setStoreLoading(false);
     }
+  };
+
+  const searchFulfillment = async () => {
+    const query = storeSearch.trim();
+    const minimumLength = pickerMode === 'delivery' ? 3 : 2;
+    if (query.length < minimumLength) {
+      showToast(pickerMode === 'delivery' ? 'Введіть адресу доставки' : 'Введіть адресу, район або назву магазину');
+      return;
+    }
+    setShowingNearby(false);
+    setStoreSearchLoading(true);
+    try {
+      const endpoint = pickerMode === 'delivery' ? '/api/addresses/search' : '/api/stores/search';
+      const response = await apiFetch(`${API_URL}${endpoint}?tg_id=${tgId}&q=${encodeURIComponent(query)}`);
+      if (!response.ok) throw new Error('Fulfillment search failed');
+      const result = await response.json();
+      const items = pickerMode === 'delivery' ? result.addresses : result.stores;
+      setStoreSearchResults(Array.isArray(items) ? items : []);
+      setStoreSearchPerformed(true);
+    } catch (error) {
+      console.error('[Mini App] Fulfillment search failed:', error);
+      setStoreSearchResults([]);
+      setStoreSearchPerformed(true);
+      showToast('Не вдалося виконати пошук');
+    } finally {
+      setStoreSearchLoading(false);
+    }
+  };
+
+  const findNearbyStores = () => {
+    if (!navigator.geolocation) {
+      showToast('Геолокація недоступна на цьому пристрої');
+      return;
+    }
+    setNearbyLoading(true);
+    navigator.geolocation.getCurrentPosition(async position => {
+      try {
+        const params = new URLSearchParams({
+          tg_id: String(tgId),
+          latitude: String(position.coords.latitude),
+          longitude: String(position.coords.longitude),
+        });
+        const response = await apiFetch(`${API_URL}/api/stores/nearby?${params}`);
+        if (!response.ok) throw new Error('Nearby stores failed');
+        const result = await response.json();
+        setStoreSearchResults(Array.isArray(result.stores) ? result.stores : []);
+        setStoreSearch('');
+        setShowingNearby(true);
+        setStoreSearchPerformed(true);
+      } catch (error) {
+        console.error('[Mini App] Nearby stores failed:', error);
+        showToast('Не вдалося знайти магазини поруч');
+      } finally {
+        setNearbyLoading(false);
+      }
+    }, () => {
+      setNearbyLoading(false);
+      showToast('Дозвольте доступ до геолокації або введіть свою адресу');
+    }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 });
   };
 
   const openProductSearch = async () => {
@@ -1179,7 +1260,7 @@ function App() {
 
   const addToCart = async (product: Product) => {
     if (!userProfile?.branchId) {
-      showToast('Спочатку оберіть магазин у Сільпо');
+      showToast('Спочатку оберіть адресу доставки або магазин для самовивозу');
       return;
     }
     setBusyProductId(product.product_id);
@@ -1198,6 +1279,10 @@ function App() {
         }),
       });
       const result = await response.json().catch(() => ({}));
+      if (response.status === 409 && result.error === 'CONTEXT_MISMATCH') {
+        showToast('Спочатку виберіть цю саму адресу або магазин у Сільпо');
+        return;
+      }
       if (!response.ok || !result.success) throw new Error(result.error || 'Cart update failed');
       showToast(product.special_price_count > 1
         ? `Додано ${product.special_price_count} шт — умову акції виконано`
@@ -1377,12 +1462,12 @@ function App() {
 
       {isAuthenticated && userProfile && (
         <button className="store-bar" type="button" onClick={() => void openStorePicker()}>
-          <span className="store-bar-icon"><MapPin size={19} /></span>
+          <span className="store-bar-icon">{userProfile.mode === 'delivery' ? <Home size={19} /> : <Store size={19} />}</span>
           <span className="store-bar-copy">
-            <small>ЦІНИ ДЛЯ ВИБРАНОГО МАГАЗИНУ</small>
-            <strong>{userProfile.storeLabel}</strong>
+            <small>{userProfile.mode === 'delivery' ? 'ДОСТАВКА ЗА АДРЕСОЮ' : 'САМОВИВІЗ ІЗ СІЛЬПО'}</small>
+            <strong>{userProfile.contextLabel}</strong>
             <span>
-              {deliveryLabel(userProfile.deliveryType)} · {availabilityBasis === 'next_day_reference'
+              {userProfile.selectionRequired ? 'Уточніть адресу — точку комплектації визначимо автоматично' : availabilityBasis === 'next_day_reference'
                 ? 'наявність на найближчий денний слот'
                 : availabilityBasis === 'unverified'
                   ? 'наявність перевіримо у робочий час'
@@ -1442,8 +1527,8 @@ function App() {
                         <div className="product-topline">
                           <span className={product.available === true && !product.availability_note ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
                             <span className="status-dot" />{product.availability_note || (product.available === true
-                              ? 'Є у вибраному магазині'
-                              : product.available === null ? 'Наявність уточнюємо' : 'Немає у вибраному магазині')}
+                              ? 'Доступно для замовлення'
+                              : product.available === null ? 'Наявність уточнюємо' : 'Наразі недоступно')}
                           </span>
                           <button className="icon-button tiny-icon" onClick={() => void removeFromFavorites(product)} disabled={isBusy} aria-label="Видалити з Улюблених">
                             <Heart size={18} fill="currentColor" />
@@ -1466,7 +1551,7 @@ function App() {
                             <button className="cart-button" onClick={() => void addToCart(product)} disabled={isBusy}>
                               {isBusy ? <span className="button-spinner" /> : <><Plus size={18} /><span>{product.special_price_count > 1 ? `${product.special_price_count} шт у кошик` : 'У кошик'}</span></>}
                             </button>
-                          ) : <span className="unavailable-note"><Package size={16} /> Немає у вибраному магазині</span>}
+                          ) : <span className="unavailable-note"><Package size={16} /> Наразі недоступно</span>}
                         </div>
                       </div>
                     </article>
@@ -1498,7 +1583,7 @@ function App() {
             </div>
             <div className="chat-explainer">
               <span><Send size={21} /></span>
-              <div><strong>Усе приходитиме в чат із ботом</strong><p>Не треба перевіряти застосунок вручну. Коли станеться вибрана подія, бот надішле коротке повідомлення з товаром, ціною та магазином.</p></div>
+              <div><strong>Усе приходитиме в чат із ботом</strong><p>Не треба перевіряти застосунок вручну. Коли станеться вибрана подія, бот надішле товар, нову ціну й актуальний спосіб отримання.</p></div>
             </div>
             <div className="settings-list">
               {SETTING_DEFINITIONS.map(item => {
@@ -1512,7 +1597,7 @@ function App() {
                 );
               })}
             </div>
-            <div className="info-card"><ShieldCheck size={18} /><p><strong>Захист від хибних сповіщень.</strong> Наявність підтверджується двома перевірками, дрібні коливання ціни ігноруються, а після зміни магазину порівняння починається заново. Бажана ціна перевіряється одразу.</p></div>
+            <div className="info-card"><ShieldCheck size={18} /><p><strong>Захист від хибних сповіщень.</strong> Наявність підтверджується двома перевірками, дрібні коливання ціни ігноруються, а після зміни адреси або самовивозу порівняння починається заново. Бажана ціна перевіряється одразу.</p></div>
           </section>
         )}
       </main>}
@@ -1528,7 +1613,7 @@ function App() {
                 <p className="onboarding-copy">Цінолов не надсилатиме нічого, доки ви самі не виберете події. Повідомлення приходитимуть у цей Telegram-чат, навіть коли Mini App закритий.</p>
                 <div className="onboarding-preview">
                   <Bell size={19} />
-                  <span><strong>Бот напише коротко й по справі</strong><small>Товар · нова ціна · умова акції · вибраний магазин</small></span>
+                  <span><strong>Бот напише коротко й по справі</strong><small>Товар · нова ціна · умова акції · спосіб отримання</small></span>
                 </div>
                 <button className="primary-button" type="button" onClick={() => setOnboardingStep(1)}>Вибрати сповіщення</button>
                 <button className="onboarding-skip" type="button" disabled={savingOnboarding} onClick={() => void saveOnboarding(DEFAULT_SETTINGS)}>Поки без сповіщень</button>
@@ -1576,7 +1661,7 @@ function App() {
               <div><p className="section-kicker">СІЛЬПО</p><h2 id="product-search-title">Додати улюблений товар</h2></div>
               <button className="icon-button" type="button" onClick={() => setProductSearchOpen(false)} aria-label="Закрити"><X size={20} /></button>
             </div>
-            <p className="product-search-context"><MapPin size={14} /><span>Ціна й наявність для <strong>{userProfile?.storeLabel}</strong></span></p>
+            <p className="product-search-context"><MapPin size={14} /><span>{userProfile?.mode === 'delivery' ? 'Доставка' : 'Самовивіз'}: <strong>{userProfile?.contextLabel}</strong></span></p>
             <label className="product-search-input">
               <Search size={19} />
               <input
@@ -1677,7 +1762,7 @@ function App() {
                           <div className="search-result-image"><ProductImage product={product} /></div>
                           <div className="search-result-copy">
                             <span className={product.available === true && !product.availability_note ? 'availability available' : product.available === null ? 'availability unknown' : 'availability'}>
-                              <span className="status-dot" />{product.availability_note || (product.available === true ? 'Є в магазині' : product.available === null ? 'Наявність уточнюємо' : 'Зараз немає')}
+                              <span className="status-dot" />{product.availability_note || (product.available === true ? 'Доступно для замовлення' : product.available === null ? 'Наявність уточнюємо' : 'Зараз немає')}
                             </span>
                             <strong>{product.name}</strong>
                             {product.displayWeight && <small>{product.displayWeight}</small>}
@@ -1718,23 +1803,38 @@ function App() {
           <section className="store-sheet" data-swipe-sheet role="dialog" aria-modal="true" aria-labelledby="store-picker-title" onMouseDown={event => event.stopPropagation()}>
             <SwipeHandle onClose={() => setStorePickerOpen(false)} />
             <div className="sheet-header">
-              <div><p className="section-kicker">КОНТЕКСТ ЦІН</p><h2 id="store-picker-title">Вибрати магазин</h2></div>
+              <div><p className="section-kicker">ЦІНИ Й НАЯВНІСТЬ</p><h2 id="store-picker-title">Як отримаєте товари?</h2></div>
               <button className="icon-button" type="button" onClick={() => setStorePickerOpen(false)} aria-label="Закрити"><X size={20} /></button>
             </div>
-            <p className="store-sheet-hint">Ціни, наявність і сповіщення перерахуються саме для цього магазину. Ваш кошик Сільпо від вибору не зміниться.</p>
-            <label className="store-search">
+            <div className="fulfillment-tabs" role="tablist" aria-label="Спосіб отримання">
+              <button className={pickerMode === 'delivery' ? 'active' : ''} type="button" role="tab" aria-selected={pickerMode === 'delivery'} onClick={() => { setPickerMode('delivery'); setStoreSearch(''); setStoreSearchResults([]); setStoreSearchPerformed(false); setShowingNearby(false); }}><Home size={17} />Доставка</button>
+              <button className={pickerMode === 'pickup' ? 'active' : ''} type="button" role="tab" aria-selected={pickerMode === 'pickup'} onClick={() => { setPickerMode('pickup'); setStoreSearch(''); setStoreSearchResults([]); setStoreSearchPerformed(false); setShowingNearby(false); }}><Store size={17} />Самовивіз</button>
+            </div>
+            <p className="store-sheet-hint">{pickerMode === 'delivery'
+              ? 'Вкажіть свою адресу. Сільпо автоматично визначить точку комплектації, а ми її не показуватимемо.'
+              : 'Знайдіть фізичний Сільпо поруч із собою та виберіть магазин, з якого заберете товари.'}</p>
+            <form className="store-search" onSubmit={event => { event.preventDefault(); void searchFulfillment(); }}>
               <Search size={18} />
-              <input value={storeSearch} onChange={event => setStoreSearch(event.target.value)} placeholder="Місто, вулиця або адреса магазину" />
-            </label>
+              <input value={storeSearch} onChange={event => { setStoreSearch(event.target.value); setStoreSearchPerformed(false); setShowingNearby(false); }} placeholder={pickerMode === 'delivery' ? 'Введіть адресу доставки' : 'Адреса, район або магазин'} aria-label={pickerMode === 'delivery' ? 'Адреса доставки' : 'Пошук магазину для самовивозу'} />
+              <button type="submit" disabled={storeSearchLoading}>{storeSearchLoading ? <span className="loading-spinner" /> : 'Знайти'}</button>
+            </form>
+            {pickerMode === 'pickup' && (
+              <button className="nearby-button" type="button" disabled={nearbyLoading} onClick={findNearbyStores}>
+                {nearbyLoading ? <span className="loading-spinner" /> : <Navigation size={17} />}
+                Магазини поруч зі мною
+              </button>
+            )}
             <div className="store-options-scroll">
-              {storeLoading && !storeOptions ? <div className="store-loading"><span className="loading-spinner" />Завантажуємо магазини…</div> : null}
-              {storeSearch.trim().length >= 2 ? (
-                <StoreGroup title="Результати пошуку" stores={storeSearchResults} current={storeOptions?.current} disabled={storeLoading} onSelect={selectStore} empty="Нічого не знайдено" />
+              {storeLoading && !storeOptions ? <div className="store-loading"><span className="loading-spinner" />Завантажуємо варіанти…</div> : null}
+              {showingNearby || storeSearchPerformed ? (
+                <StoreGroup title={showingNearby ? 'Найближчі магазини' : pickerMode === 'delivery' ? 'Знайдені адреси' : 'Магазини поруч з адресою'} stores={storeSearchResults} current={storeOptions?.current} disabled={storeLoading} onSelect={selectStore} empty={pickerMode === 'delivery' ? 'Адресу не знайдено' : 'Магазинів не знайдено'} />
               ) : storeOptions ? (
-                <>
-                  <StoreGroup title="Магазин з акаунта Сільпо" stores={[storeOptions.accountDefault]} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} />
-                  <StoreGroup title="З останніх замовлень" stores={storeOptions.recent} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} empty="Недавніх магазинів немає" />
-                  <StoreGroup title="Мої адреси" stores={storeOptions.addresses} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} empty="Збережених адрес немає" />
+                pickerMode === 'delivery' ? <>
+                  {storeOptions.accountDefault.mode === 'delivery' && <StoreGroup title="Остання адреса в Сільпо" stores={[{ ...storeOptions.accountDefault, source: 'silpo' }]} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} />}
+                  <StoreGroup title="Мої адреси" stores={storeOptions.addresses} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} empty="Збережених адрес немає — введіть нову вище" />
+                </> : <>
+                  {storeOptions.accountDefault.mode === 'pickup' && <StoreGroup title="Останній самовивіз у Сільпо" stores={[{ ...storeOptions.accountDefault, source: 'silpo' }]} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} />}
+                  <StoreGroup title="З останніх замовлень" stores={storeOptions.recent} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} empty="Шукайте за адресою або дозвольте геолокацію" />
                 </>
               ) : null}
             </div>
@@ -1785,11 +1885,18 @@ function StoreGroup({
     <div className="store-group">
       <p>{title}</p>
       {stores.length ? stores.map((store, index) => {
-        const selected = current?.branchId === store.branchId && current?.deliveryType === store.deliveryType;
+        const selected = store.source === 'silpo'
+          ? current?.contextSource === 'silpo'
+          : current?.branchId === store.branchId
+            && current?.deliveryType === store.deliveryType
+            && (store.mode === 'pickup' || current?.contextLabel === store.contextLabel);
+        const subtitle = store.mode === 'delivery'
+          ? store.source === 'silpo' ? 'Остання вибрана в Сільпо' : 'Доставка · точку комплектації визначимо автоматично'
+          : [store.distanceKm !== undefined ? `${store.distanceKm.toLocaleString('uk-UA')} км` : '', store.isOpen === true ? 'відчинено' : store.isOpen === false ? 'зачинено' : 'Самовивіз'].filter(Boolean).join(' · ');
         return (
-          <button type="button" key={`${store.branchId}-${store.deliveryType}-${index}`} disabled={disabled} onClick={() => void onSelect(store)}>
-            <span className="store-option-icon"><Store size={18} /></span>
-            <span><strong>{store.storeLabel}</strong><small>{store.addressLabel || deliveryLabel(store.deliveryType)}</small></span>
+          <button type="button" key={`${store.branchId || store.contextLabel}-${store.deliveryType || store.latitude}-${index}`} disabled={disabled} onClick={() => void onSelect(store)}>
+            <span className="store-option-icon">{store.mode === 'delivery' ? <Home size={18} /> : <Store size={18} />}</span>
+            <span><strong>{store.contextLabel || store.storeLabel}</strong><small>{subtitle}</small></span>
             {selected ? <i><Check size={16} /></i> : <ChevronRight size={17} />}
           </button>
         );

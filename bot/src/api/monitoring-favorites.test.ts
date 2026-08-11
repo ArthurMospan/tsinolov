@@ -7,6 +7,8 @@ test('recognizes Silpo stock fields without confusing missing data with out of s
     assert.equal(productAvailability({ stock: 0, available: false }), false);
     assert.equal(productAvailability({ stock: 0, available: true }), false);
     assert.equal(productAvailability({ isOutOfStock: true, available: true }), false);
+    assert.equal(productAvailability({ deliveryAvailable: true }), null);
+    assert.equal(productAvailability({ storeAvailability: false, stock: 10, deliveryAvailable: true }), false);
     assert.equal(productAvailability({ name: 'Товар' }), null);
 });
 

@@ -475,13 +475,16 @@ app.get('/api/stores/search', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     try {
         const branches = await listBranches(token);
-        const stores = branches
+        const pickupBranches = branches.some(branch => branch?.hasPickup === true)
+            ? branches.filter(branch => branch?.hasPickup === true)
+            : branches;
+        const stores = pickupBranches
             .map(branch => ({
                 branchId: String(branch?.branchId || branch?.id || ''),
                 deliveryType: 'SelfPickup',
                 storeLabel: publicStoreLabel(branch),
-                city: String(branch?.city || branch?.locality || ''),
-                address: String(branch?.address || branch?.streetAddress || ''),
+                city: String(branch?.city || branch?.cityFull || branch?.locality || ''),
+                address: String(branch?.address || branch?.addressFull || branch?.streetAddress || ''),
             }))
             .filter(store => store.branchId && `${store.city} ${store.address} ${store.storeLabel}`.toLocaleLowerCase('uk-UA').includes(query))
             .slice(0, 20);

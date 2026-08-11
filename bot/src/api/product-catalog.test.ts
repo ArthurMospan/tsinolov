@@ -17,6 +17,15 @@ test('normalizes a nested MCP category tree', () => {
     assert.equal(categories[0].children[0].productCount, 42);
 });
 
+test('unwraps only an explicit catalog wrapper', () => {
+    const categories = categoriesFromResponse(response({ categories: [{
+        id: 'root',
+        name: 'Каталог',
+        children: [{ id: 'food', name: 'Їжа' }],
+    }] }));
+    assert.equal(categories[0].id, 'food');
+});
+
 test('builds arguments from the live MCP input schema names', () => {
     const start = new Date('2026-08-10T09:00:00.000Z');
     const end = new Date('2026-08-10T11:00:00.000Z');

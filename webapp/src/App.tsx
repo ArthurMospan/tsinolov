@@ -95,6 +95,7 @@ interface Product {
   availability_note?: string;
   stock: number;
   displayWeight?: string;
+  price_unit?: string;
   company_id?: string;
   special_price: number;
   special_price_count: number;
@@ -303,6 +304,12 @@ function productAvailabilityNote(item: any): string | undefined {
 }
 
 function productAvailabilityValue(item: any): boolean | null {
+  for (const field of ['storeAvailability', 'store_availability', 'in_stock']) {
+    if (!Object.prototype.hasOwnProperty.call(item || {}, field)) continue;
+    if (item[field] === null) return null;
+    return booleanValue(item[field]);
+  }
+
   const note = productAvailabilityNote(item);
   if (note === 'Очікується') return false;
   if (note === 'Лише онлайн') return null;
@@ -329,16 +336,31 @@ function productAvailabilityValue(item: any): boolean | null {
       if (Number.isFinite(quantity)) return quantity > 0;
     }
   }
-  for (const field of [
-    'in_stock', 'inStock', 'is_in_stock', 'isInStock',
-    'deliveryAvailable', 'delivery_available', 'isAvailableForDelivery', 'availableForDelivery',
-  ]) {
+  for (const field of ['inStock', 'is_in_stock', 'isInStock']) {
     if (item?.[field] !== undefined && item?.[field] !== null) return booleanValue(item[field]);
   }
   for (const field of ['available', 'isAvailable', 'is_available']) {
     if (item?.[field] !== undefined && item?.[field] !== null && !booleanValue(item[field])) return false;
   }
   return null;
+}
+
+function productPriceUnit(item: any): string | undefined {
+  const raw = item?.ratio ?? item?.priceRatio ?? item?.price_ratio
+    ?? item?.priceUnit ?? item?.price_unit ?? item?.sellingUnit ?? item?.selling_unit
+    ?? item?.displayRatio ?? item?.display_ratio;
+  const value = scalarText(raw).toLowerCase().replace(/\s+/g, '');
+  if (!value) return undefined;
+  const match = value.match(/^(\d+(?:[.,]\d+)?)?(кг|kg|кілограм(?:ів)?|г|gr|g|грам(?:ів)?|л|l|літр(?:ів)?|мл|ml|мілілітр(?:ів)?|шт|pcs?|piece|pieces|од)$/i);
+  if (!match) return scalarText(raw) || undefined;
+  const amount = match[1]?.replace('.', ',');
+  const sourceUnit = match[2].toLowerCase();
+  const unit = /^(кг|kg|кілограм)/.test(sourceUnit) ? 'кг'
+    : /^(г|gr|g|грам)/.test(sourceUnit) ? 'г'
+      : /^(мл|ml|мілілітр)/.test(sourceUnit) ? 'мл'
+        : /^(л|l|літр)/.test(sourceUnit) ? 'л'
+          : 'шт';
+  return amount ? `${amount} ${unit}` : unit;
 }
 
 function productDisplayWeight(item: any): string | undefined {
@@ -418,6 +440,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
     availability_note: availabilityNote,
     stock: numberValue(item.stock),
     displayWeight: productDisplayWeight(item),
+    price_unit: productPriceUnit(item),
     company_id: item.companyId ? String(item.companyId) : undefined,
     special_price: specialPrice,
     special_price_count: specialOffer?.count || 0,
@@ -1394,7 +1417,7 @@ function App() {
                         {link ? <a className="product-name" href={link} target="_blank" rel="noreferrer">{product.name}</a> : <h3 className="product-name">{product.name}</h3>}
                         {product.displayWeight && <p className="product-meta">{product.displayWeight}</p>}
                         <div className="price-line">
-                          <strong>{formatPrice(product.effective_price)}</strong>
+                          <strong>{formatPrice(product.effective_price)}{product.price_unit && <span className="price-unit"> / {product.price_unit}</span>}</strong>
                           {product.special_price_count > 1 && <span className="condition-badge">від {product.special_price_count} шт</span>}
                           {discount > 0 && <span className="discount-badge">−{discount}%</span>}
                           {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
@@ -1624,7 +1647,7 @@ function App() {
                             <strong>{product.name}</strong>
                             {product.displayWeight && <small>{product.displayWeight}</small>}
                             <div className="search-result-price">
-                              <b>{formatPrice(product.effective_price)}</b>
+                              <b>{formatPrice(product.effective_price)}{product.price_unit && <span className="price-unit"> / {product.price_unit}</span>}</b>
                               {product.special_price_count > 1 && <span>від {product.special_price_count} шт</span>}
                               {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
                             </div>
@@ -1691,7 +1714,7 @@ function App() {
             <div className="sheet-header"><div><p className="section-kicker">ЦІНОВИЙ КОНТРОЛЬ</p><h2 id="target-title">Бажана ціна</h2></div><button className="icon-button" onClick={() => setModalProduct(null)} aria-label="Закрити"><X size={20} /></button></div>
             <p className="sheet-product">{modalProduct.name}</p>
             <label className="input-label" htmlFor="target-price">Нагадати, коли ціна буде</label>
-            <div className="price-input-wrap"><input id="target-price" type="number" min="0" step="0.01" inputMode="decimal" autoFocus value={targetDraft} onChange={event => setTargetDraft(event.target.value)} placeholder="0" /><span>₴</span></div>
+            <div className="price-input-wrap"><input id="target-price" type="number" min="0" step="0.01" inputMode="decimal" autoFocus value={targetDraft} onChange={event => setTargetDraft(event.target.value)} placeholder="0" /><span>₴{modalProduct.price_unit ? ` / ${modalProduct.price_unit}` : ''}</span></div>
             <p className="sheet-hint">{targetHint}</p>
             <button className="primary-button" disabled={savingTargetId === modalProduct.product_id} onClick={() => void saveTargetPrice(modalProduct, targetDraft)}>{savingTargetId === modalProduct.product_id ? <span className="button-spinner light" /> : 'Зберегти бажану ціну'}</button>
             {modalProduct.target_price > 0 && <button className="remove-target-button" onClick={() => void saveTargetPrice(modalProduct, '0')}>Скинути бажану ціну</button>}

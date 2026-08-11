@@ -1,4 +1,5 @@
 import { callMCPTool } from './mcp-direct';
+import { productAvailability } from './monitoring-favorites';
 import { parseMcpContent, type StoreContext } from './store-context';
 
 const detailsCache = new Map<string, { expiresAt: number; product: any }>();
@@ -87,7 +88,15 @@ export async function enrichProductsWithDetails(
             const original = products[index];
             try {
                 const details = await getProductDetails(token, context, original);
-                if (details) enriched[index] = { ...original, ...details };
+                if (details) {
+                    enriched[index] = {
+                        ...original,
+                        ...details,
+                        // Product details can contain generic online-delivery flags.
+                        // Availability must stay tied to the store-scoped favorites response.
+                        storeAvailability: productAvailability(original),
+                    };
+                }
             } catch (error) {
                 console.warn(`[MCP] Product details unavailable for ${productSlug(original) || 'unknown product'}:`, error);
             }

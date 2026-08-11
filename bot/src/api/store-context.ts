@@ -47,9 +47,39 @@ function branchItems(value: any): any[] {
 }
 
 export function publicStoreLabel(branch: any): string {
-    const city = String(branch?.city || branch?.locality || '').trim();
-    const address = String(branch?.address || branch?.streetAddress || '').trim();
+    const city = String(branch?.city || branch?.cityFull || branch?.locality || '').trim();
+    const address = String(branch?.address || branch?.addressFull || branch?.streetAddress || '').trim();
     return [city, address].filter(Boolean).join(', ') || 'Магазин Сільпо за замовчуванням';
+}
+
+function normalizedLocation(value: unknown): string {
+    return String(value || '')
+        .toLocaleLowerCase('uk-UA')
+        .replace(/\s+/g, ' ')
+        .replace(/[.,]/g, '')
+        .trim();
+}
+
+function branchCity(branch: any): string {
+    return String(branch?.city || branch?.cityFull || branch?.locality || '').trim();
+}
+
+function branchAddress(branch: any): string {
+    return String(branch?.address || branch?.addressFull || branch?.streetAddress || '').trim();
+}
+
+function branchIdOf(branch: any): string {
+    return String(branch?.branchId || branch?.id || '').trim();
+}
+
+export function preferredPickupBranch(selected: any, branches: any[]): any {
+    if (!selected || selected?.hasPickup === true) return selected;
+    const city = normalizedLocation(branchCity(selected));
+    const address = normalizedLocation(branchAddress(selected));
+    if (!city || !address) return selected;
+    return branches.find(branch => branch?.hasPickup === true
+        && normalizedLocation(branchCity(branch)) === city
+        && normalizedLocation(branchAddress(branch)) === address) || selected;
 }
 
 export function sameStoreContext(previous: any, current: Pick<StoreContext, 'branchId' | 'deliveryType'>): boolean {
@@ -88,12 +118,16 @@ export async function listBranches(token: string): Promise<any[]> {
 
 export async function getStoreContext(token: string, preference?: StorePreference): Promise<StoreContext> {
     if (preference?.branchId) {
-        const branch = await resolveBranch(token, preference.branchId);
+        let branch = await resolveBranch(token, preference.branchId);
+        if (preference.deliveryType === 'SelfPickup' && branch?.hasPickup !== true) {
+            branch = preferredPickupBranch(branch, await listBranches(token));
+        }
+        const branchId = branchIdOf(branch) || preference.branchId;
         return {
-            branchId: preference.branchId,
+            branchId,
             deliveryType: preference.deliveryType || 'SelfPickup',
-            city: String(branch?.city || branch?.locality || '').trim(),
-            address: String(branch?.address || branch?.streetAddress || '').trim(),
+            city: branchCity(branch),
+            address: branchAddress(branch),
             storeLabel: publicStoreLabel(branch) !== 'Магазин Сільпо за замовчуванням'
                 ? publicStoreLabel(branch)
                 : preference.storeLabel || 'Вибраний магазин Сільпо',
@@ -136,8 +170,8 @@ export async function getStoreContext(token: string, preference?: StorePreferenc
     return {
         branchId,
         deliveryType,
-        city: String(branch?.city || branch?.locality || '').trim(),
-        address: String(branch?.address || branch?.streetAddress || '').trim(),
+        city: branchCity(branch),
+        address: branchAddress(branch),
         storeLabel: publicStoreLabel(branch),
         isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
         orderMinimum: Number(minimumValidation?.context?.orderCostMin) || null,

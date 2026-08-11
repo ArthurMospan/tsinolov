@@ -92,7 +92,11 @@ export function categoriesFromResponse(response: any): CatalogCategory[] {
         .map(item => ({ ...item, children: sortTree(item.children) }))
         .sort((left, right) => collator.compare(left.name, right.name));
     let roots = [...byId.values()].filter(node => !node.parentId || !byId.has(node.parentId));
-    if (roots.length === 1 && roots[0].children.length > 0 && roots[0].productCount === null) {
+    const onlyRoot = roots[0];
+    const syntheticRoot = onlyRoot
+        ? [onlyRoot.id, onlyRoot.name].some(value => /^(root|catalog|categories|all|каталог|категорії|усі)$/i.test(value.trim()))
+        : false;
+    if (roots.length === 1 && onlyRoot.children.length > 0 && onlyRoot.productCount === null && syntheticRoot) {
         roots = roots[0].children;
     }
     return sortTree(roots);

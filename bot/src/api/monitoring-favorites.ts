@@ -55,6 +55,12 @@ function favoritesFromResponse(response: any): any[] {
 }
 
 export function productAvailability(product: any): boolean | null {
+    if (Object.prototype.hasOwnProperty.call(product || {}, 'storeAvailability')) {
+        const value = product.storeAvailability;
+        if (value === null) return null;
+        return truthy(value);
+    }
+
     const statuses = nestedFieldValues(product, [
         'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
         'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
@@ -88,8 +94,7 @@ export function productAvailability(product: any): boolean | null {
         }
     }
     for (const value of nestedFieldValues(product, [
-        'in_stock', 'inStock', 'is_in_stock', 'isInStock',
-        'deliveryAvailable', 'delivery_available', 'isAvailableForDelivery', 'availableForDelivery'
+        'in_stock', 'inStock', 'is_in_stock', 'isInStock'
     ])) {
         return truthy(value);
     }

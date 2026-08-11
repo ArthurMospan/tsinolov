@@ -70,10 +70,6 @@ export function productPriceUnit(product: any): string | undefined {
 
 export function productDisplayMeasurement(product: any): string | undefined {
     const ratio = normalizedUnit(product?.ratio ?? product?.priceRatio ?? product?.price_ratio);
-    // Weighted and bulk products are priced per one base unit. displayRatio is
-    // only Silpo's alternate UI price (for example 100 г), not package size.
-    if (ratio === 'кг' || ratio === 'л') return `1 ${ratio}`;
-
     const title = product?.title ?? product?.name ?? product?.productName;
     const titlePack = scalarText(title).match(/(\d+)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)\s*(кг|kg|г|gr|g|л|l|мл|ml)(?=$|[\s+),;/])/i);
     if (titlePack) {
@@ -81,11 +77,20 @@ export function productDisplayMeasurement(product: any): string | undefined {
         if (unit) return `${titlePack[1]} × ${titlePack[2].replace('.', ',')} ${unit}`;
     }
 
-    const direct = nestedFieldValues(product, [
-        'displayWeight', 'display_weight', 'weightText', 'weight_text', 'netWeightText', 'net_weight_text',
-        'volumeText', 'volume_text', 'packageSize', 'package_size', 'packSize', 'pack_size',
+    const titleMeasurement = measurementFromText(title);
+    if (titleMeasurement) return titleMeasurement;
+
+    // For goods sold by weight or volume, displayRatio is Silpo's actual
+    // customer-facing quantity. It must win over generic metadata such as
+    // weightText: "1 кг".
+    const displayRatio = measurementFromText(product?.displayRatio ?? product?.display_ratio);
+    if ((ratio === 'кг' || ratio === 'л') && displayRatio) return displayRatio;
+
+    const packageMeasurement = nestedFieldValues(product, [
+        'packageSize', 'package_size', 'packSize', 'pack_size', 'netWeightText', 'net_weight_text',
+        'volumeText', 'volume_text', 'weightText', 'weight_text',
     ]).map(measurementFromText).find(Boolean);
-    if (direct) return direct;
+    if (packageMeasurement) return packageMeasurement;
 
     const attributes = nestedFieldValues(product, ['attributes', 'characteristics', 'properties'])
         .flatMap(value => Array.isArray(value) ? value : [value]);
@@ -96,8 +101,14 @@ export function productDisplayMeasurement(product: any): string | undefined {
         if (measurement) return measurement;
     }
 
-    const titleMeasurement = measurementFromText(title);
-    if (titleMeasurement) return titleMeasurement;
+    // Piece products can also carry a useful display ratio, but package/title
+    // metadata above is more precise than a generic "1 шт".
+    if (displayRatio) return displayRatio;
+
+    const direct = nestedFieldValues(product, ['displayWeight', 'display_weight'])
+        .map(measurementFromText)
+        .find(Boolean);
+    if (direct) return direct;
 
     if (ratio) return `1 ${ratio}`;
     const unit = normalizedUnit(product?.unitOfMeasure ?? product?.unit_of_measure ?? product?.measurementUnit

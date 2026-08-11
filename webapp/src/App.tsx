@@ -378,8 +378,13 @@ function productPriceUnit(item: any): string | undefined {
 }
 
 function productDisplayWeight(item: any): string | undefined {
+  // API-normalized presentation data is authoritative. In particular, a
+  // weighted product can deliberately be displayed as 100 г while its price
+  // ratio remains кг.
+  const normalizedDisplayWeight = scalarText(item?.displayWeight ?? item?.display_weight);
+  if (normalizedDisplayWeight) return normalizedDisplayWeight;
+
   const priceUnit = productPriceUnit(item);
-  if (priceUnit === 'кг' || priceUnit === 'л') return `1 ${priceUnit}`;
 
   const productName = String(item?.title ?? item?.name ?? item?.productName ?? '').trim();
   const packMeasurement = productName.match(/(\d+)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)\s*(кг|г|л|мл)(?=$|[\s+),;/])/i);
@@ -388,7 +393,7 @@ function productDisplayWeight(item: any): string | undefined {
   }
 
   const direct = nestedFieldValues(item, [
-    'displayWeight', 'display_weight', 'weightText', 'weight_text', 'netWeightText', 'net_weight_text',
+    'weightText', 'weight_text', 'netWeightText', 'net_weight_text',
     'volumeText', 'volume_text', 'displayUnit', 'display_unit', 'sellingUnitText', 'selling_unit_text',
   ]).map(scalarText).find(Boolean);
   if (direct) return direct;
@@ -450,6 +455,7 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
   const effectivePrice = specialPrice || currentPrice;
   const referencePrice = oldPrice > effectivePrice ? oldPrice : specialPrice ? currentPrice : currentPrice;
   const availabilityNote = productAvailabilityNote(item);
+  const availability = productAvailabilityValue(item);
 
   return {
     product_id: id,
@@ -462,7 +468,9 @@ function normalizeProduct(item: any, availabilityReliable = true): Product {
     has_promo: booleanValue(hasExplicitPromo) || Boolean(specialPrice) || oldPrice > currentPrice,
     target_price: numberValue(item.target_price ?? item.targetPrice),
     slug: item.slug ? String(item.slug) : undefined,
-    available: !availabilityReliable ? null : productAvailabilityValue(item),
+    // A negative product-level status (for example "expected") stays
+    // negative even when the wider result set could not be verified.
+    available: availability === false ? false : !availabilityReliable ? null : availability,
     availability_note: availabilityNote,
     stock: numberValue(item.stock),
     displayWeight: productDisplayWeight(item),

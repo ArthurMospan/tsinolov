@@ -15,6 +15,7 @@ test('recognizes Silpo stock fields without confusing missing data with out of s
 
 test('reads expected and online-only markers from product details', () => {
     assert.equal(productAvailabilityReason({ badges: [{ code: 'expected' }] }), 'expected');
+    assert.equal(productAvailabilityReason({ availabilityInfo: { isExpected: true } }), 'expected');
     assert.equal(productAvailabilityReason({ promotions: [{ id: 'only_online' }] }), 'online_only');
 });
 

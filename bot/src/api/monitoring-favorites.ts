@@ -69,13 +69,19 @@ export function productAvailabilityReason(product: any): ProductAvailabilityReas
         'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
         'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
         'stockMessage', 'stock_message', 'availabilityLabel', 'availability_label',
+        'availabilityType', 'availability_type', 'state', 'stateName', 'state_name',
     ]).map(scalarText);
     const markers = nestedFieldValues(product, [
-        'promotions', 'promos', 'badges', 'labels', 'modifier', 'modifiers',
+        'promotions', 'promos', 'badges', 'labels', 'modifier', 'modifiers', 'tags', 'chips', 'flags',
         'availabilityInfo', 'availability_info',
     ]).flatMap(value => nestedScalarTexts(value));
     const signal = [...statuses, ...markers].join(' ').toLowerCase();
 
+    const explicitlyExpected = nestedFieldValues(product, [
+        'expected', 'isExpected', 'is_expected', 'awaiting', 'isAwaiting', 'is_awaiting',
+        'comingSoon', 'coming_soon', 'isComingSoon', 'is_coming_soon',
+    ]).some(truthy);
+    if (explicitlyExpected) return 'expected';
     if (/очіку|expected|awaiting|coming[_\s-]?soon/.test(signal)) return 'expected';
     if (/out[_\s-]?of[_\s-]?stock|unavailable|not[_\s-]?available|sold[_\s-]?out|немає|відсут/.test(signal)) {
         return 'out_of_stock';

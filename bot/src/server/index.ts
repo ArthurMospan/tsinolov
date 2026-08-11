@@ -302,9 +302,10 @@ app.get('/api/catalog/products', async (req, res) => {
         const page = fallback
             ? { ...fallback, hasMore: false, nextOffset: fallback.products.length }
             : catalogPage;
+        const products = await enrichProductsWithDetails(token, context, page.products);
         res.json({
             ...page,
-            products: page.products.map(product => ({
+            products: products.map(product => ({
                 ...product,
                 ...productPresentation(product),
                 in_stock: productAvailability(product),
@@ -343,8 +344,9 @@ app.get('/api/products/search', async (req, res) => {
         if (favoritesResult.status === 'rejected') {
             console.warn('[Products] Favorites unavailable while marking search results:', favoritesResult.reason);
         }
+        const products = await enrichProductsWithDetails(token, context, search.products);
         res.json({
-            products: search.products.map(product => ({
+            products: products.map(product => ({
                 ...product,
                 ...productPresentation(product),
                 in_stock: productAvailability(product),

@@ -51,6 +51,23 @@ function needsProductSnapshot(product: any): boolean {
     return !hasDisplayQuantity || !hasStock;
 }
 
+export function mergeProductData(summary: any, authoritativeData: any): any {
+    const {
+        storeAvailability: _ignoredStoreAvailability,
+        store_availability: _ignoredSnakeStoreAvailability,
+        ...availabilitySource
+    } = authoritativeData || {};
+    const authoritativeAvailability = productAvailability(availabilitySource);
+    const summaryAvailability = productAvailability(summary);
+    return {
+        ...summary,
+        ...authoritativeData,
+        // A store/timeslot snapshot is authoritative when it contains an
+        // availability signal. The favorites summary is fallback-only.
+        storeAvailability: authoritativeAvailability ?? summaryAvailability,
+    };
+}
+
 export function matchingCatalogProduct(product: any, candidates: any[]): any | null {
     const expectedExternalId = productExternalId(product);
     const expectedId = productId(product);
@@ -187,7 +204,8 @@ async function resolveCatalogProduct(
 export async function enrichProductsWithDetails(
     token: string,
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
-    products: any[]
+    products: any[],
+    options: { authoritativeAvailability?: boolean } = {},
 ): Promise<any[]> {
     const enriched = [...products];
     let cursor = 0;
@@ -197,7 +215,7 @@ export async function enrichProductsWithDetails(
             const original = products[index];
             try {
                 let snapshot: any | null = null;
-                if (needsProductSnapshot(original)) {
+                if (options.authoritativeAvailability || needsProductSnapshot(original)) {
                     try {
                         snapshot = await getSilpoProductSnapshot(context, original);
                     } catch (error) {
@@ -206,11 +224,7 @@ export async function enrichProductsWithDetails(
                 }
 
                 if (snapshot) {
-                    enriched[index] = {
-                        ...original,
-                        ...snapshot,
-                        storeAvailability: productAvailability(original),
-                    };
+                    enriched[index] = mergeProductData(original, snapshot);
                     continue;
                 }
 
@@ -226,14 +240,7 @@ export async function enrichProductsWithDetails(
                     console.warn(`[MCP] Full product details unavailable for ${productSlug(resolved) || productExternalId(resolved) || 'unknown product'}:`, error);
                 }
                 if (resolved !== original || details) {
-                    enriched[index] = {
-                        ...original,
-                        ...resolved,
-                        ...details,
-                        // Preserve the summary only as a fallback. Explicit
-                        // negative stock/details take priority in productAvailability.
-                        storeAvailability: productAvailability(original),
-                    };
+                    enriched[index] = mergeProductData(original, { ...resolved, ...details });
                 }
             } catch (error) {
                 console.warn(`[MCP] Product catalogue resolution unavailable for ${productSlug(original) || productExternalId(original) || 'unknown product'}:`, error);

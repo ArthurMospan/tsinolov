@@ -1,4 +1,5 @@
-import { callMCPTool } from './mcp-direct';
+import { callMCPTool, listMCPTools, type MCPToolDefinition } from './mcp-direct';
+import { getSilpoCurrentTimeslot } from './silpo-public-catalog';
 import { parseMcpContent, type StoreContext } from './store-context';
 
 export type AvailabilityBasis = 'current_slot' | 'next_day_reference' | 'unverified';
@@ -94,14 +95,121 @@ export function productAvailabilityReason(product: any): ProductAvailabilityReas
     return null;
 }
 
-function favoritesFromResponse(response: any): any[] {
-    for (const value of parseMcpContent(response)) {
-        if (Array.isArray(value)) return value;
-        if (Array.isArray(value?.items)) return value.items;
-        if (Array.isArray(value?.products)) return value.products;
-        if (Array.isArray(value?.favorites)) return value.favorites;
+function looksLikeFavorite(value: any): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return [
+        value.id, value.productId, value.product_id, value.externalProductId,
+        value.external_product_id, value.slug, value.title, value.name, value.productName,
+    ].some(candidate => candidate !== undefined && candidate !== null && String(candidate).trim());
+}
+
+function favoriteIdentityKeys(product: any): string[] {
+    const keys: string[] = [];
+    const externalId = Number(product?.externalProductId ?? product?.external_product_id);
+    if (Number.isSafeInteger(externalId)) keys.push(`external:${externalId}`);
+    for (const [prefix, value] of [
+        ['id', product?.id ?? product?.productId ?? product?.product_id],
+        ['slug', product?.slug ?? product?.productSlug ?? product?.product_slug],
+    ] as const) {
+        const normalized = String(value ?? '').trim().toLocaleLowerCase('uk-UA');
+        if (normalized) keys.push(`${prefix}:${normalized}`);
     }
-    return [];
+    const title = String(product?.title ?? product?.name ?? product?.productName ?? '')
+        .trim().toLocaleLowerCase('uk-UA').replace(/\s+/g, ' ');
+    if (title) keys.push(`title:${title}`);
+    return keys;
+}
+
+export function mergeFavoriteCollections(...collections: any[][]): any[] {
+    const merged: any[] = [];
+    const keyToIndex = new Map<string, number>();
+    for (const collection of collections) {
+        for (const product of collection) {
+            if (!looksLikeFavorite(product)) continue;
+            const keys = favoriteIdentityKeys(product);
+            const existingIndex = keys.map(key => keyToIndex.get(key)).find(index => index !== undefined);
+            if (existingIndex === undefined) {
+                const index = merged.length;
+                merged.push(product);
+                keys.forEach(key => keyToIndex.set(key, index));
+                continue;
+            }
+            merged[existingIndex] = { ...merged[existingIndex], ...product };
+            favoriteIdentityKeys(merged[existingIndex]).forEach(key => keyToIndex.set(key, existingIndex));
+        }
+    }
+    return merged;
+}
+
+export function mergeAccountAndStoreFavorites(accountFavorites: any[], storeFavorites: any[]): any[] {
+    const storeKeys = new Set(storeFavorites.flatMap(favoriteIdentityKeys));
+    return mergeFavoriteCollections(accountFavorites, storeFavorites).map(product => {
+        const existsInStoreProjection = favoriteIdentityKeys(product).some(key => storeKeys.has(key));
+        if (existsInStoreProjection) return product;
+        return {
+            ...product,
+            storeAvailability: false,
+            availabilityStatus: product.availabilityStatus ?? 'out_of_stock',
+            legacyFavorite: true,
+        };
+    });
+}
+
+export function favoritesFromResponse(response: any): any[] {
+    const products: any[] = [];
+    const visited = new Set<any>();
+    const collectionKey = /(favorite|product|item|unavailable|expected|archiv|legacy|out.?of.?stock)/i;
+    const wrapperKey = /^(data|result|payload|response)$/i;
+    const visit = (value: any, insideCollection: boolean): void => {
+        if (value === undefined || value === null || visited.has(value)) return;
+        if (Array.isArray(value)) {
+            visited.add(value);
+            const containsProducts = insideCollection || value.some(looksLikeFavorite);
+            value.forEach(item => visit(item, containsProducts));
+            return;
+        }
+        if (typeof value !== 'object') {
+            if (!insideCollection || (typeof value !== 'string' && typeof value !== 'number')) return;
+            const externalId = Number(value);
+            products.push(Number.isSafeInteger(externalId)
+                ? { externalProductId: externalId }
+                : { id: String(value) });
+            return;
+        }
+        visited.add(value);
+        if (insideCollection && looksLikeFavorite(value)) {
+            products.push(value);
+            return;
+        }
+        for (const [key, nested] of Object.entries(value)) {
+            if (collectionKey.test(key)) visit(nested, true);
+            else if (wrapperKey.test(key)) visit(nested, insideCollection);
+        }
+    };
+    for (const value of parseMcpContent(response)) visit(value, Array.isArray(value));
+    return mergeFavoriteCollections(products);
+}
+
+export function buildFavoriteVisibilityArgs(tool: MCPToolDefinition): Record<string, boolean> {
+    const args: Record<string, boolean> = {};
+    for (const key of Object.keys(tool.inputSchema?.properties || {})) {
+        const normalized = key.replace(/[_-]/g, '').toLowerCase();
+        if (/^include(unavailable|outofstock|archived|inactive|legacy)/.test(normalized)) args[key] = true;
+        if (/^(instock|onlyinstock|onlyavailable|availableonly|excludeunavailable|hideunavailable)/.test(normalized)) {
+            args[key] = false;
+        }
+    }
+    return args;
+}
+
+async function favoriteVisibilityArgs(token: string): Promise<Record<string, boolean>> {
+    try {
+        const tool = (await listMCPTools(token)).find(candidate => candidate.name === 'silpo_get_my_favorites');
+        return tool ? buildFavoriteVisibilityArgs(tool) : {};
+    } catch (error) {
+        console.warn('[MCP] Favorites schema unavailable; using default visibility:', error);
+        return {};
+    }
 }
 
 export function productAvailability(product: any): boolean | null {
@@ -169,7 +277,13 @@ export function nextDaytimeReference(now = new Date()): { start: Date; end: Date
     return { start, end: new Date(start.getTime() + 2 * 60 * 60 * 1000) };
 }
 
-async function fetchFavorites(token: string, context: Pick<StoreContext, 'branchId' | 'deliveryType'>, start: Date, end: Date) {
+async function fetchFavorites(
+    token: string,
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    start: Date,
+    end: Date,
+    visibilityArgs: Record<string, boolean>,
+) {
     return favoritesFromResponse(await callMCPTool(token, 'silpo_get_my_favorites', {
         branchId: context.branchId,
         deliveryType: context.deliveryType,
@@ -177,6 +291,15 @@ async function fetchFavorites(token: string, context: Pick<StoreContext, 'branch
         timeslotEnd: end.toISOString(),
         limit: 500,
         offset: 0,
+        ...visibilityArgs,
+    }));
+}
+
+async function fetchAccountFavorites(token: string, visibilityArgs: Record<string, boolean>): Promise<any[]> {
+    return favoritesFromResponse(await callMCPTool(token, 'silpo_get_my_favorites', {
+        limit: 500,
+        offset: 0,
+        ...visibilityArgs,
     }));
 }
 
@@ -185,18 +308,34 @@ export async function getMonitoringFavorites(
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
     now = new Date()
 ): Promise<MonitoringFavoritesResult> {
-    const currentEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-    const current = await fetchFavorites(token, context, now, currentEnd);
-    if (!allProductsUnexpectedlyUnavailable(current)) {
-        return { products: current, availabilityReliable: true, availabilityBasis: 'current_slot', checkedFor: now.toISOString() };
+    const visibilityArgs = await favoriteVisibilityArgs(token);
+    const accountFavoritesPromise = fetchAccountFavorites(token, visibilityArgs).catch(error => {
+        console.warn('[MCP] Account-wide favorites unavailable; using the store catalogue projection:', error);
+        return [];
+    });
+    const actualSlot = await getSilpoCurrentTimeslot(context).catch(error => {
+        console.warn(`[Silpo] Valid favorites timeslot unavailable for branch ${context.branchId}:`, error);
+        return null;
+    });
+    const currentStart = actualSlot ? new Date(actualSlot.start) : now;
+    const currentEnd = actualSlot ? new Date(actualSlot.end) : new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    const current = await fetchFavorites(token, context, currentStart, currentEnd, visibilityArgs);
+    const accountFavorites = await accountFavoritesPromise;
+    if (actualSlot || !allProductsUnexpectedlyUnavailable(current)) {
+        return {
+            products: mergeAccountAndStoreFavorites(accountFavorites, current),
+            availabilityReliable: Boolean(actualSlot) || !allProductsUnexpectedlyUnavailable(current),
+            availabilityBasis: 'current_slot',
+            checkedFor: currentStart.toISOString(),
+        };
     }
 
     const reference = nextDaytimeReference(now);
     try {
-        const daytime = await fetchFavorites(token, context, reference.start, reference.end);
+        const daytime = await fetchFavorites(token, context, reference.start, reference.end, visibilityArgs);
         if (!allProductsUnexpectedlyUnavailable(daytime)) {
             return {
-                products: daytime,
+                products: mergeAccountAndStoreFavorites(accountFavorites, daytime),
                 availabilityReliable: false,
                 availabilityBasis: 'next_day_reference',
                 checkedFor: reference.start.toISOString(),
@@ -206,5 +345,10 @@ export async function getMonitoringFavorites(
         console.warn('[MCP] Daytime availability fallback failed:', error);
     }
 
-    return { products: current, availabilityReliable: false, availabilityBasis: 'unverified', checkedFor: now.toISOString() };
+    return {
+        products: mergeAccountAndStoreFavorites(accountFavorites, current),
+        availabilityReliable: false,
+        availabilityBasis: 'unverified',
+        checkedFor: currentStart.toISOString(),
+    };
 }

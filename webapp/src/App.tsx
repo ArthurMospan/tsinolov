@@ -321,7 +321,9 @@ function productAvailabilityValue(item: any): boolean | null {
   if (note === 'Очікується' || item?.availability_reason === 'out_of_stock') return false;
   if (note === 'Лише онлайн') return null;
 
-  for (const field of ['storeAvailability', 'store_availability', 'in_stock']) {
+  // The API-normalized value is authoritative. Legacy storeAvailability can
+  // only be used as a fallback for older responses.
+  for (const field of ['in_stock', 'storeAvailability', 'store_availability']) {
     if (!Object.prototype.hasOwnProperty.call(item || {}, field)) continue;
     if (item[field] === null) return null;
     return booleanValue(item[field]);

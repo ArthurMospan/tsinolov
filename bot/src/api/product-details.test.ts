@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { matchingCatalogProduct, productDetailsFromResponse } from './product-details';
-import { productAvailabilityReason } from './monitoring-favorites';
+import { matchingCatalogProduct, mergeProductData, productDetailsFromResponse } from './product-details';
+import { productAvailability, productAvailabilityReason } from './monitoring-favorites';
 import { productDisplayMeasurement } from './product-presentation';
 
 function response(root: any) {
@@ -56,4 +56,24 @@ test('resolves a favorite without slug by its external article number', () => {
     assert.equal(product?.slug, 'kartoplia-rannia-ukrainska-993140');
     assert.equal(product?.displayRatio, '100г');
     assert.equal(product?.stock, 0);
+});
+
+test('makes an authoritative zero stock override a stale positive favorites summary', () => {
+    const product = mergeProductData(
+        { id: 'favorite-potato', storeAvailability: true, stock: 5 },
+        { id: 'catalog-potato', externalProductId: 993140, displayRatio: '100г', stock: 0 },
+    );
+
+    assert.equal(product.storeAvailability, false);
+    assert.equal(productAvailability(product), false);
+});
+
+test('makes authoritative positive stock override a stale negative favorites summary', () => {
+    const product = mergeProductData(
+        { id: 'favorite-beet', storeAvailability: false, stock: 0 },
+        { id: 'catalog-beet', externalProductId: 123, displayRatio: '100г', stock: 7 },
+    );
+
+    assert.equal(product.storeAvailability, true);
+    assert.equal(productAvailability(product), true);
 });

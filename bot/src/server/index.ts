@@ -219,7 +219,9 @@ app.get('/api/favorites', async (req, res) => {
     try {
         const context = await getUserStoreContext(tgId, token);
         const monitoring = await getMonitoringFavorites(token, context);
-        let favorites = await enrichProductsWithDetails(token, context, monitoring.products);
+        let favorites = await enrichProductsWithDetails(token, context, monitoring.products, {
+            authoritativeAvailability: true,
+        });
         // Merge with DB targets
         const userFavs = await db.prepare('SELECT product_id, target_price FROM user_favorites WHERE tg_id = ?').all(tgId) as any[];
         const targetMap = new Map();
@@ -229,6 +231,7 @@ app.get('/api/favorites', async (req, res) => {
             favorites = favorites.map(f => {
                 const pid = f.id || f.product_id || f.productId || f.slug;
                 const availabilityReason = productAvailabilityReason(f);
+                const availability = productAvailability(f);
                 if (f.storeAvailability === true && (availabilityReason === 'expected' || availabilityReason === 'out_of_stock')) {
                     console.warn('[Availability] Negative product details override the favorites summary', {
                         product: String(f.slug || pid),
@@ -236,10 +239,15 @@ app.get('/api/favorites', async (req, res) => {
                         reason: availabilityReason,
                     });
                 }
+                const {
+                    storeAvailability: _internalStoreAvailability,
+                    store_availability: _internalSnakeStoreAvailability,
+                    ...favorite
+                } = f;
                 return {
-                    ...f,
+                    ...favorite,
                     ...productPresentation(f),
-                    in_stock: productAvailability(f),
+                    in_stock: availability,
                     availability_reason: availabilityReason,
                     target_price: targetMap.get(pid) || 0
                 };

@@ -4,9 +4,9 @@ const ECOM_BASE = 'https://sf-ecom-api.silpo.ua';
 const REQUEST_TIMEOUT_MS = 8_000;
 const SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 
-type Timeslot = { start: string; end: string };
+export type SilpoTimeslot = { start: string; end: string };
 
-const timeslotCache = new Map<string, { expiresAt: number; slot: Timeslot | null }>();
+const timeslotCache = new Map<string, { expiresAt: number; slot: SilpoTimeslot | null }>();
 const snapshotCache = new Map<string, { expiresAt: number; product: any }>();
 
 async function requestJson(path: string): Promise<any> {
@@ -25,7 +25,7 @@ async function requestJson(path: string): Promise<any> {
     return text ? JSON.parse(text) : null;
 }
 
-export function selectAvailableTimeslot(response: any, now = new Date()): Timeslot | null {
+export function selectAvailableTimeslot(response: any, now = new Date()): SilpoTimeslot | null {
     const nowMs = now.getTime();
     const slots = Array.isArray(response?.items) ? response.items : [];
     const available = slots
@@ -38,9 +38,9 @@ export function selectAvailableTimeslot(response: any, now = new Date()): Timesl
     return slot ? { start: slot.datePeriod.start, end: slot.datePeriod.end } : null;
 }
 
-async function currentTimeslot(
+export async function getSilpoCurrentTimeslot(
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>
-): Promise<Timeslot | null> {
+): Promise<SilpoTimeslot | null> {
     const cacheKey = `${context.branchId}:${context.deliveryType}`;
     const cached = timeslotCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.slot;
@@ -68,9 +68,9 @@ export async function getSilpoProductSnapshot(
     const cached = snapshotCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.product;
 
-    let slot: Timeslot | null = null;
+    let slot: SilpoTimeslot | null = null;
     try {
-        slot = await currentTimeslot(context);
+        slot = await getSilpoCurrentTimeslot(context);
     } catch (error) {
         console.warn(`[Silpo] Timeslot lookup failed for branch ${context.branchId}:`, error);
     }

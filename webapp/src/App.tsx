@@ -93,6 +93,7 @@ interface Product {
   slug?: string;
   available: boolean | null;
   availability_note?: string;
+  availability_reason?: 'expected' | 'online_only' | 'out_of_stock' | null;
   stock: number;
   displayWeight?: string;
   price_unit?: string;
@@ -287,11 +288,23 @@ function scalarText(value: unknown): string {
 }
 
 function productAvailabilityNote(item: any): string | undefined {
+  if (item?.availability_reason === 'expected') return 'Очікується';
+  if (item?.availability_reason === 'online_only') return 'Лише онлайн';
+
   const statuses = nestedFieldValues(item, [
     'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
     'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
-  ]).map(scalarText).join(' ').toLowerCase();
-  if (/очіку|expected|awaiting|coming[_\s-]?soon/.test(statuses)) return 'Очікується';
+    'stockMessage', 'stock_message', 'availabilityLabel', 'availability_label',
+  ]).map(scalarText);
+  const markers = nestedFieldValues(item, [
+    'promotions', 'promos', 'badges', 'labels', 'modifier', 'modifiers',
+    'availabilityInfo', 'availability_info',
+  ]).map(value => {
+    try { return typeof value === 'string' ? value : JSON.stringify(value); }
+    catch { return ''; }
+  });
+  const signal = [...statuses, ...markers].join(' ').toLowerCase();
+  if (/очіку|expected|awaiting|coming[_\s-]?soon/.test(signal)) return 'Очікується';
 
   const onlineValues = nestedFieldValues(item, [
     'onlineOnly', 'online_only', 'isOnlineOnly', 'is_online_only', 'onlyOnline', 'only_online',
@@ -299,20 +312,21 @@ function productAvailabilityNote(item: any): string | undefined {
   ]);
   const onlineOnly = onlineValues.some(value => booleanValue(value)
     || /online|онлайн/.test(scalarText(value).toLowerCase()));
-  if (onlineOnly || /only[_\s-]?online|лише онлайн|тільки онлайн/.test(statuses)) return 'Лише онлайн';
+  if (onlineOnly || /only[_\s-]?online|лише[_\s-]?онлайн|тільки[_\s-]?онлайн/.test(signal)) return 'Лише онлайн';
   return undefined;
 }
 
 function productAvailabilityValue(item: any): boolean | null {
+  const note = productAvailabilityNote(item);
+  if (note === 'Очікується' || item?.availability_reason === 'out_of_stock') return false;
+  if (note === 'Лише онлайн') return null;
+
   for (const field of ['storeAvailability', 'store_availability', 'in_stock']) {
     if (!Object.prototype.hasOwnProperty.call(item || {}, field)) continue;
     if (item[field] === null) return null;
     return booleanValue(item[field]);
   }
 
-  const note = productAvailabilityNote(item);
-  if (note === 'Очікується') return false;
-  if (note === 'Лише онлайн') return null;
   const statuses = nestedFieldValues(item, [
     'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
     'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
@@ -364,6 +378,15 @@ function productPriceUnit(item: any): string | undefined {
 }
 
 function productDisplayWeight(item: any): string | undefined {
+  const priceUnit = productPriceUnit(item);
+  if (priceUnit === 'кг' || priceUnit === 'л') return `1 ${priceUnit}`;
+
+  const productName = String(item?.title ?? item?.name ?? item?.productName ?? '').trim();
+  const packMeasurement = productName.match(/(\d+)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)\s*(кг|г|л|мл)(?=$|[\s+),;/])/i);
+  if (packMeasurement) {
+    return `${packMeasurement[1]} × ${packMeasurement[2].replace('.', ',')} ${packMeasurement[3].toLowerCase()}`;
+  }
+
   const direct = nestedFieldValues(item, [
     'displayWeight', 'display_weight', 'weightText', 'weight_text', 'netWeightText', 'net_weight_text',
     'volumeText', 'volume_text', 'displayUnit', 'display_unit', 'sellingUnitText', 'selling_unit_text',
@@ -378,6 +401,12 @@ function productDisplayWeight(item: any): string | undefined {
     }))
     .find(attribute => /вага|маса|об.?єм|фасов|кількість|одиниц|weight|volume|unit|pack/.test(attribute.label) && attribute.value);
   if (attributeMeasurement) return attributeMeasurement.value;
+
+  const nameMeasurement = productName.match(/(?:^|\s)(\d+(?:[.,]\d+)?)\s*(кг|г|л|мл|шт)(?=$|[\s+),;/])/i);
+  if (nameMeasurement) return `${nameMeasurement[1].replace('.', ',')} ${nameMeasurement[2].toLowerCase()}`;
+  if (priceUnit && /^(?:\d+(?:[.,]\d+)?\s+)?(?:кг|г|л|мл|шт)$/.test(priceUnit)) {
+    return /^\d/.test(priceUnit) ? priceUnit : `1 ${priceUnit}`;
+  }
 
   const unitText = nestedFieldValues(item, [
     'unitOfMeasure', 'unit_of_measure', 'measurementUnit', 'measurement_unit', 'measureUnit', 'measure_unit',
@@ -401,9 +430,6 @@ function productDisplayWeight(item: any): string | undefined {
   if (unitText && unitText !== '[object Object]') {
     return amount > 0 ? `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unitText}` : unitText;
   }
-  const productName = String(item?.title ?? item?.name ?? item?.productName ?? '').trim();
-  const nameMeasurement = productName.match(/(?:^|\s)(\d+(?:[.,]\d+)?)\s*(кг|г|л|мл|шт)\b/i);
-  if (nameMeasurement) return `${nameMeasurement[1].replace('.', ',')} ${nameMeasurement[2].toLowerCase()}`;
   if (/вагов|на вагу|weight product/i.test(productName)) return 'ціна за 1 кг';
   return undefined;
 }
@@ -1417,7 +1443,7 @@ function App() {
                         {link ? <a className="product-name" href={link} target="_blank" rel="noreferrer">{product.name}</a> : <h3 className="product-name">{product.name}</h3>}
                         {product.displayWeight && <p className="product-meta">{product.displayWeight}</p>}
                         <div className="price-line">
-                          <strong>{formatPrice(product.effective_price)}{product.price_unit && <span className="price-unit"> / {product.price_unit}</span>}</strong>
+                          <strong>{formatPrice(product.effective_price)}</strong>
                           {product.special_price_count > 1 && <span className="condition-badge">від {product.special_price_count} шт</span>}
                           {discount > 0 && <span className="discount-badge">−{discount}%</span>}
                           {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
@@ -1647,7 +1673,7 @@ function App() {
                             <strong>{product.name}</strong>
                             {product.displayWeight && <small>{product.displayWeight}</small>}
                             <div className="search-result-price">
-                              <b>{formatPrice(product.effective_price)}{product.price_unit && <span className="price-unit"> / {product.price_unit}</span>}</b>
+                              <b>{formatPrice(product.effective_price)}</b>
                               {product.special_price_count > 1 && <span>від {product.special_price_count} шт</span>}
                               {product.reference_price > product.effective_price && <del>{formatPrice(product.reference_price)}</del>}
                             </div>

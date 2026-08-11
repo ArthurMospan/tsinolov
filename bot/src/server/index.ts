@@ -7,10 +7,11 @@ import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
 import { profileIdentityFromMcp } from '../api/mcp-profile';
 import { getStoreContext, listBranches, parseMcpContent, publicStoreLabel } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
-import { getMonitoringFavorites, productAvailability } from '../api/monitoring-favorites';
+import { getMonitoringFavorites, productAvailability, productAvailabilityReason } from '../api/monitoring-favorites';
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
 import { getCatalogCategories, getCatalogProducts } from '../api/product-catalog';
 import { enrichProductsWithDetails } from '../api/product-details';
+import { productPresentation } from '../api/product-presentation';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -227,9 +228,19 @@ app.get('/api/favorites', async (req, res) => {
         if (Array.isArray(favorites)) {
             favorites = favorites.map(f => {
                 const pid = f.id || f.product_id || f.productId || f.slug;
+                const availabilityReason = productAvailabilityReason(f);
+                if (f.storeAvailability === true && (availabilityReason === 'expected' || availabilityReason === 'out_of_stock')) {
+                    console.warn('[Availability] Negative product details override the favorites summary', {
+                        product: String(f.slug || pid),
+                        branchId: context.branchId,
+                        reason: availabilityReason,
+                    });
+                }
                 return {
                     ...f,
+                    ...productPresentation(f),
                     in_stock: productAvailability(f),
+                    availability_reason: availabilityReason,
                     target_price: targetMap.get(pid) || 0
                 };
             });
@@ -295,7 +306,9 @@ app.get('/api/catalog/products', async (req, res) => {
             ...page,
             products: page.products.map(product => ({
                 ...product,
+                ...productPresentation(product),
                 in_stock: productAvailability(product),
+                availability_reason: productAvailabilityReason(product),
                 isFavorite: isFavoriteProduct(product, favoritesResult.products),
             })),
             store: context,
@@ -333,7 +346,9 @@ app.get('/api/products/search', async (req, res) => {
         res.json({
             products: search.products.map(product => ({
                 ...product,
+                ...productPresentation(product),
                 in_stock: productAvailability(product),
+                availability_reason: productAvailabilityReason(product),
                 isFavorite: isFavoriteProduct(product, favorites),
             })),
             store: context,

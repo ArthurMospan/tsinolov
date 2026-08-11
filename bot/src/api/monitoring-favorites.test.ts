@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { allProductsUnexpectedlyUnavailable, nextDaytimeReference, productAvailability } from './monitoring-favorites';
+import { allProductsUnexpectedlyUnavailable, nextDaytimeReference, productAvailability, productAvailabilityReason } from './monitoring-favorites';
 
 test('recognizes Silpo stock fields without confusing missing data with out of stock', () => {
     assert.equal(productAvailability({ stock: 3, available: true }), true);
@@ -9,7 +9,13 @@ test('recognizes Silpo stock fields without confusing missing data with out of s
     assert.equal(productAvailability({ isOutOfStock: true, available: true }), false);
     assert.equal(productAvailability({ deliveryAvailable: true }), null);
     assert.equal(productAvailability({ storeAvailability: false, stock: 10, deliveryAvailable: true }), false);
+    assert.equal(productAvailability({ storeAvailability: true, stock: 10, promotions: [{ id: 'expected' }] }), false);
     assert.equal(productAvailability({ name: 'Товар' }), null);
+});
+
+test('reads expected and online-only markers from product details', () => {
+    assert.equal(productAvailabilityReason({ badges: [{ code: 'expected' }] }), 'expected');
+    assert.equal(productAvailabilityReason({ promotions: [{ id: 'only_online' }] }), 'online_only');
 });
 
 test('retries only when a multi-product response becomes entirely unavailable', () => {

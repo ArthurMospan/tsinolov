@@ -44,6 +44,50 @@ function truthy(value: unknown): boolean {
     return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function nestedScalarTexts(value: unknown, maxDepth = 5): string[] {
+    const texts: string[] = [];
+    const visited = new Set<unknown>();
+    const visit = (nested: unknown, depth: number): void => {
+        if (nested === undefined || nested === null || depth > maxDepth || visited.has(nested)) return;
+        if (typeof nested === 'string' || typeof nested === 'number') {
+            texts.push(String(nested));
+            return;
+        }
+        if (typeof nested !== 'object') return;
+        visited.add(nested);
+        if (Array.isArray(nested)) nested.forEach(item => visit(item, depth + 1));
+        else Object.values(nested).forEach(item => visit(item, depth + 1));
+    };
+    visit(value, 0);
+    return texts;
+}
+
+export type ProductAvailabilityReason = 'expected' | 'online_only' | 'out_of_stock' | null;
+
+export function productAvailabilityReason(product: any): ProductAvailabilityReason {
+    const statuses = nestedFieldValues(product, [
+        'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
+        'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
+        'stockMessage', 'stock_message', 'availabilityLabel', 'availability_label',
+    ]).map(scalarText);
+    const markers = nestedFieldValues(product, [
+        'promotions', 'promos', 'badges', 'labels', 'modifier', 'modifiers',
+        'availabilityInfo', 'availability_info',
+    ]).flatMap(value => nestedScalarTexts(value));
+    const signal = [...statuses, ...markers].join(' ').toLowerCase();
+
+    if (/очіку|expected|awaiting|coming[_\s-]?soon/.test(signal)) return 'expected';
+    if (/out[_\s-]?of[_\s-]?stock|unavailable|not[_\s-]?available|sold[_\s-]?out|немає|відсут/.test(signal)) {
+        return 'out_of_stock';
+    }
+    const onlineOnly = nestedFieldValues(product, [
+        'onlineOnly', 'online_only', 'isOnlineOnly', 'is_online_only', 'onlyOnline', 'only_online',
+        'priceOnlyOnline', 'price_only_online', 'isOnlinePrice', 'is_online_price', 'priceType', 'price_type',
+    ]).some(value => truthy(value) || /online|онлайн/.test(scalarText(value).toLowerCase()));
+    if (onlineOnly || /only[_\s-]?online|лише[_\s-]?онлайн|тільки[_\s-]?онлайн/.test(signal)) return 'online_only';
+    return null;
+}
+
 function favoritesFromResponse(response: any): any[] {
     for (const value of parseMcpContent(response)) {
         if (Array.isArray(value)) return value;
@@ -55,25 +99,19 @@ function favoritesFromResponse(response: any): any[] {
 }
 
 export function productAvailability(product: any): boolean | null {
+    const reason = productAvailabilityReason(product);
+    if (reason === 'expected' || reason === 'out_of_stock') return false;
+    if (reason === 'online_only') return null;
+
+    if (nestedFieldValues(product, ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']).some(truthy)) return false;
+
+    // Keep the availability captured from the store-scoped favorites call,
+    // but only after negative evidence from the richer details response.
     if (Object.prototype.hasOwnProperty.call(product || {}, 'storeAvailability')) {
         const value = product.storeAvailability;
         if (value === null) return null;
         return truthy(value);
     }
-
-    const statuses = nestedFieldValues(product, [
-        'availabilityStatus', 'availability_status', 'stockStatus', 'stock_status',
-        'productStatus', 'product_status', 'status', 'availabilityMessage', 'availability_message',
-    ]).map(scalarText).join(' ').toLowerCase();
-    if (/очіку|expected|awaiting|coming[_\s-]?soon|out[_\s-]?of[_\s-]?stock|unavailable|not[_\s-]?available|sold[_\s-]?out|немає|відсут/.test(statuses)) return false;
-
-    const onlineOnly = nestedFieldValues(product, [
-        'onlineOnly', 'online_only', 'isOnlineOnly', 'is_online_only', 'onlyOnline', 'only_online',
-        'priceOnlyOnline', 'price_only_online', 'isOnlinePrice', 'is_online_price', 'priceType', 'price_type',
-    ]).some(value => truthy(value) || /online|онлайн/.test(scalarText(value).toLowerCase()));
-    if (onlineOnly || /only[_\s-]?online|лише онлайн|тільки онлайн/.test(statuses)) return null;
-
-    if (nestedFieldValues(product, ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']).some(truthy)) return false;
     for (const stockValue of nestedFieldValues(product, ['stock'])) {
         if (stockValue !== null && stockValue !== '') {
             if (typeof stockValue === 'string') {

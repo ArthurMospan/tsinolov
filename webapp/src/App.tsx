@@ -1812,7 +1812,7 @@ function App() {
             </div>
             <p className="store-sheet-hint">{pickerMode === 'delivery'
               ? 'Вкажіть свою адресу. Сільпо автоматично визначить точку комплектації, а ми її не показуватимемо.'
-              : 'Знайдіть фізичний Сільпо поруч із собою та виберіть магазин, з якого заберете товари.'}</p>
+              : 'Показуємо лише фізичні магазини, де доступний самовивіз онлайн-замовлення. Найближчий звичайний Сільпо може не входити до списку.'}</p>
             <form className="store-search" onSubmit={event => { event.preventDefault(); void searchFulfillment(); }}>
               <Search size={18} />
               <input value={storeSearch} onChange={event => { setStoreSearch(event.target.value); setStoreSearchPerformed(false); setShowingNearby(false); }} placeholder={pickerMode === 'delivery' ? 'Введіть адресу доставки' : 'Адреса, район або магазин'} aria-label={pickerMode === 'delivery' ? 'Адреса доставки' : 'Пошук магазину для самовивозу'} />
@@ -1821,13 +1821,13 @@ function App() {
             {pickerMode === 'pickup' && (
               <button className="nearby-button" type="button" disabled={nearbyLoading} onClick={findNearbyStores}>
                 {nearbyLoading ? <span className="loading-spinner" /> : <Navigation size={17} />}
-                Магазини поруч зі мною
+                Точки самовивозу поруч
               </button>
             )}
             <div className="store-options-scroll">
               {storeLoading && !storeOptions ? <div className="store-loading"><span className="loading-spinner" />Завантажуємо варіанти…</div> : null}
               {showingNearby || storeSearchPerformed ? (
-                <StoreGroup title={showingNearby ? 'Найближчі магазини' : pickerMode === 'delivery' ? 'Знайдені адреси' : 'Магазини поруч з адресою'} stores={storeSearchResults} current={storeOptions?.current} disabled={storeLoading} onSelect={selectStore} empty={pickerMode === 'delivery' ? 'Адресу не знайдено' : 'Магазинів не знайдено'} />
+                <StoreGroup title={showingNearby ? 'Найближчі точки самовивозу' : pickerMode === 'delivery' ? 'Знайдені адреси' : 'Точки самовивозу поруч з адресою'} stores={storeSearchResults} current={storeOptions?.current} disabled={storeLoading} onSelect={selectStore} empty={pickerMode === 'delivery' ? 'Адресу не знайдено' : 'Точок самовивозу не знайдено'} />
               ) : storeOptions ? (
                 pickerMode === 'delivery' ? <>
                   {storeOptions.accountDefault.mode === 'delivery' && <StoreGroup title="Остання адреса в Сільпо" stores={[{ ...storeOptions.accountDefault, source: 'silpo' }]} current={storeOptions.current} disabled={storeLoading} onSelect={selectStore} />}
@@ -1892,7 +1892,7 @@ function StoreGroup({
             && (store.mode === 'pickup' || current?.contextLabel === store.contextLabel);
         const subtitle = store.mode === 'delivery'
           ? store.source === 'silpo' ? 'Остання вибрана в Сільпо' : 'Доставка · точку комплектації визначимо автоматично'
-          : [store.distanceKm !== undefined ? `${store.distanceKm.toLocaleString('uk-UA')} км` : '', store.isOpen === true ? 'відчинено' : store.isOpen === false ? 'зачинено' : 'Самовивіз'].filter(Boolean).join(' · ');
+          : [store.distanceKm !== undefined ? `≈ ${store.distanceKm.toLocaleString('uk-UA')} км по прямій` : '', store.isOpen === true ? 'відчинено' : store.isOpen === false ? 'зачинено' : 'Самовивіз'].filter(Boolean).join(' · ');
         return (
           <button type="button" key={`${store.branchId || store.contextLabel}-${store.deliveryType || store.latitude}-${index}`} disabled={disabled} onClick={() => void onSelect(store)}>
             <span className="store-option-icon">{store.mode === 'delivery' ? <Home size={18} /> : <Store size={18} />}</span>

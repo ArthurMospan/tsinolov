@@ -12,8 +12,11 @@ import {
     parseMcpContent,
     publicDeliveryAddressLabel,
     publicStoreLabel,
+    supportsPickup,
     type StoreContext,
+    uniquePhysicalStores,
 } from '../api/store-context';
+import { coordinatesOf, distanceKm, type Coordinates } from '../api/location';
 import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites, productAvailability, productAvailabilityReason } from '../api/monitoring-favorites';
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
@@ -69,18 +72,6 @@ function savedAddressItems(response: any): any[] {
     if (Array.isArray(root?.addresses)) return root.addresses;
     if (Array.isArray(root?.data)) return root.data;
     return [];
-}
-
-function coordinatesOf(value: any): { latitude: number; longitude: number } | null {
-    const latitudeValue = value?.latitude ?? value?.lat ?? value?.location?.latitude ?? value?.location?.lat
-        ?? value?.coordinates?.latitude ?? value?.coordinates?.lat ?? value?.position?.lat ?? value?.geo?.lat;
-    const longitudeValue = value?.longitude ?? value?.lng ?? value?.lon ?? value?.location?.longitude ?? value?.location?.lng ?? value?.location?.lon
-        ?? value?.coordinates?.longitude ?? value?.coordinates?.lng ?? value?.coordinates?.lon ?? value?.position?.lng ?? value?.position?.lon ?? value?.geo?.lng ?? value?.geo?.lon;
-    if (latitudeValue === undefined || latitudeValue === null || latitudeValue === ''
-        || longitudeValue === undefined || longitudeValue === null || longitudeValue === '') return null;
-    const latitude = Number(latitudeValue);
-    const longitude = Number(longitudeValue);
-    return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
 }
 
 function isLikelyActiveAddress(address: any): boolean {
@@ -234,20 +225,11 @@ async function geocodeAddresses(query: string): Promise<any[]> {
     }
 }
 
-function distanceKm(from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }): number {
-    const radius = 6371;
-    const radians = (degrees: number) => degrees * Math.PI / 180;
-    const latitudeDelta = radians(to.latitude - from.latitude);
-    const longitudeDelta = radians(to.longitude - from.longitude);
-    const a = Math.sin(latitudeDelta / 2) ** 2
-        + Math.cos(radians(from.latitude)) * Math.cos(radians(to.latitude)) * Math.sin(longitudeDelta / 2) ** 2;
-    return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function pickupOption(branch: any, origin?: { latitude: number; longitude: number }): any | null {
+function pickupOption(branch: any, origin?: Coordinates): any | null {
     const branchId = String(branch?.branchId || branch?.id || '');
     if (!branchId) return null;
     const coordinates = coordinatesOf(branch);
+    const exactDistanceKm = origin && coordinates ? distanceKm(origin, coordinates) : undefined;
     return {
         branchId,
         deliveryType: 'SelfPickup',
@@ -258,7 +240,8 @@ function pickupOption(branch: any, origin?: { latitude: number; longitude: numbe
         address: String(branch?.address || branch?.addressFull || branch?.streetAddress || ''),
         latitude: coordinates?.latitude,
         longitude: coordinates?.longitude,
-        distanceKm: origin && coordinates ? Number(distanceKm(origin, coordinates).toFixed(1)) : undefined,
+        distanceKm: exactDistanceKm === undefined ? undefined : Number(exactDistanceKm.toFixed(1)),
+        distanceMeters: exactDistanceKm === undefined ? undefined : Math.round(exactDistanceKm * 1000),
         isOpen: typeof branch?.open === 'boolean' ? branch.open : null,
     };
 }
@@ -680,7 +663,7 @@ app.get('/api/stores/options', async (req, res) => {
             recentSeeds.set(branchId, { branchId, deliveryType });
             if (recentSeeds.size >= 4) break;
         }
-        const recent = await Promise.all([...recentSeeds.values()].map(seed => getStoreContext(token, seed)));
+        const recent = uniquePhysicalStores(await Promise.all([...recentSeeds.values()].map(seed => getStoreContext(token, seed))));
 
         res.json({ current, accountDefault, recent, addresses });
     } catch (error) {
@@ -698,9 +681,7 @@ app.get('/api/stores/search', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     try {
         const branches = await listBranches(token);
-        const pickupBranches = branches.some(branch => branch?.hasPickup === true)
-            ? branches.filter(branch => branch?.hasPickup === true)
-            : branches;
+        const pickupBranches = uniquePhysicalStores(branches.filter(supportsPickup));
         const geocoded = rawQuery.length >= 3 ? await geocodeAddresses(rawQuery).catch(() => []) : [];
         const origin = geocoded[0] ? { latitude: geocoded[0].latitude, longitude: geocoded[0].longitude } : undefined;
         const stores = pickupBranches.map(branch => pickupOption(branch, origin)).filter(Boolean)
@@ -709,7 +690,7 @@ app.get('/api/stores/search', async (req, res) => {
                 return `${store.city} ${store.address} ${store.storeLabel}`.toLocaleLowerCase('uk-UA').includes(query);
             })
             .sort((left: any, right: any) => {
-                if (origin) return (left.distanceKm ?? Number.MAX_VALUE) - (right.distanceKm ?? Number.MAX_VALUE);
+                if (origin) return (left.distanceMeters ?? Number.MAX_VALUE) - (right.distanceMeters ?? Number.MAX_VALUE);
                 return left.storeLabel.localeCompare(right.storeLabel, 'uk-UA');
             })
             .slice(0, 20);
@@ -728,12 +709,10 @@ app.get('/api/stores/nearby', async (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     try {
         const branches = await listBranches(token);
-        const pickupBranches = branches.some(branch => branch?.hasPickup === true)
-            ? branches.filter(branch => branch?.hasPickup === true)
-            : branches;
+        const pickupBranches = uniquePhysicalStores(branches.filter(supportsPickup));
         const stores = pickupBranches.map(branch => pickupOption(branch, origin)).filter(Boolean)
             .filter((store: any) => Number.isFinite(store.distanceKm))
-            .sort((left: any, right: any) => left.distanceKm - right.distanceKm)
+            .sort((left: any, right: any) => left.distanceMeters - right.distanceMeters)
             .slice(0, 20);
         res.json({ stores });
     } catch (error) {

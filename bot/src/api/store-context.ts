@@ -1,4 +1,5 @@
 import { callMCPTool } from './mcp-direct';
+import { coordinatesOf } from './location';
 
 export interface StoreContext {
     branchId: string;
@@ -131,6 +132,44 @@ export function preferredPickupBranch(selected: any, branches: any[]): any {
     return branches.find(branch => branch?.hasPickup === true
         && normalizedLocation(branchCity(branch)) === city
         && normalizedLocation(branchAddress(branch)) === address) || selected;
+}
+
+export function supportsPickup(branch: any): boolean {
+    if (branch?.hasPickup === true) return true;
+    const deliveryTypes = [
+        branch?.deliveryType,
+        branch?.fulfillmentType,
+        ...(Array.isArray(branch?.deliveryTypes) ? branch.deliveryTypes : []),
+        ...(Array.isArray(branch?.availableDeliveryTypes) ? branch.availableDeliveryTypes : []),
+    ];
+    return deliveryTypes.some(value => fulfillmentMode(value) === 'pickup');
+}
+
+function physicalStoreScore(store: any): number {
+    let score = 0;
+    if (store?.hasPickup === true) score += 100;
+    if (fulfillmentMode(store?.deliveryType) === 'pickup' || store?.mode === 'pickup') score += 20;
+    if (store?.open === true || store?.isOpen === true) score += 5;
+    if (coordinatesOf(store)) score += 1;
+    return score;
+}
+
+export function uniquePhysicalStores<T extends Record<string, any>>(stores: T[]): T[] {
+    const unique = new Map<string, T>();
+    for (const store of stores) {
+        const branchId = branchIdOf(store);
+        const city = branchCity(store);
+        const address = branchAddress(store);
+        const publicLabel = String(store?.storeLabel || store?.contextLabel || publicStoreLabel(store)).trim();
+        const location = normalizedLocation([city, address].filter(Boolean).join(' ') || publicLabel);
+        const key = location && publicLabel !== 'Магазин Сільпо за замовчуванням'
+            ? `location:${location}`
+            : `branch:${branchId}`;
+        if (!key || key === 'branch:') continue;
+        const existing = unique.get(key);
+        if (!existing || physicalStoreScore(store) > physicalStoreScore(existing)) unique.set(key, store);
+    }
+    return [...unique.values()];
 }
 
 export function sameStoreContext(previous: any, current: Pick<StoreContext, 'branchId' | 'deliveryType'>): boolean {

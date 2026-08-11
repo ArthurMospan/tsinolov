@@ -32,6 +32,7 @@ export async function sendTelegramMessage(
                 photo: imageUrl,
                 caption: text,
                 parse_mode: 'HTML',
+                disable_notification: true,
                 show_caption_above_media: false,
                 reply_markup: replyMarkup,
             });
@@ -47,6 +48,7 @@ export async function sendTelegramMessage(
         chat_id: chatId,
         text,
         parse_mode: 'HTML',
+        disable_notification: true,
         link_preview_options: { is_disabled: true },
         reply_markup: replyMarkup,
     });

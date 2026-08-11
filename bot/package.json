@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx src/bot/index.ts",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test src/notifications/alternative-ranking.test.ts src/notifications/personal-promos.test.ts src/notifications/notification-rules.test.ts src/notifications/product-pricing.test.ts src/notifications/telegram-format.test.ts src/api/mcp-profile.test.ts src/api/store-context.test.ts src/api/monitoring-favorites.test.ts src/api/product-search.test.ts src/api/product-catalog.test.ts src/api/product-details.test.ts src/api/product-presentation.test.ts src/api/silpo-public-catalog.test.ts",
+    "test": "tsx --test src/notifications/alternative-ranking.test.ts src/notifications/personal-promos.test.ts src/notifications/notification-rules.test.ts src/notifications/notification-schedule.test.ts src/notifications/product-pricing.test.ts src/notifications/telegram-format.test.ts src/api/mcp-profile.test.ts src/api/store-context.test.ts src/api/monitoring-favorites.test.ts src/api/product-search.test.ts src/api/product-catalog.test.ts src/api/product-details.test.ts src/api/product-presentation.test.ts src/api/silpo-public-catalog.test.ts src/api/telegram.test.ts",
     "start": "node dist/bot/index.js"
   },
   "type": "commonjs",

@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import db from '../db/index';
 import { runUserCheck } from '../notifications/engine';
+import { automaticNotificationsAllowed } from '../notifications/notification-schedule';
 import { sendTelegramMessage } from '../api/telegram';
 
 export async function runChecker(bot: Telegraf, onlyTgId?: number): Promise<string> {
@@ -29,7 +30,7 @@ export async function runChecker(bot: Telegraf, onlyTgId?: number): Promise<stri
 export function startChecker(bot: Telegraf) {
     let running = false;
     const run = async () => {
-        if (running) return;
+        if (running || !automaticNotificationsAllowed()) return;
         running = true;
         try { await runChecker(bot); }
         finally { running = false; }

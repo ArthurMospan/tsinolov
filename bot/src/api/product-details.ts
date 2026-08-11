@@ -1,5 +1,6 @@
 import { callMCPTool } from './mcp-direct';
 import { productAvailability } from './monitoring-favorites';
+import { productsFromSearchResponse } from './product-search';
 import { parseMcpContent, type StoreContext } from './store-context';
 
 const detailsCache = new Map<string, { expiresAt: number; product: any }>();
@@ -19,6 +20,37 @@ function productSlug(product: any): string {
     if (direct) return direct;
     const url = String(firstValue(product, ['url', 'productUrl', 'product_url', 'webUrl', 'web_url']) || '').trim();
     return url.match(/\/product\/([^/?#]+)/i)?.[1] || '';
+}
+
+function productExternalId(product: any): number | null {
+    const value = Number(firstValue(product, ['externalProductId', 'external_product_id']));
+    return Number.isSafeInteger(value) ? value : null;
+}
+
+function productId(product: any): string {
+    return String(firstValue(product, ['id', 'productId', 'product_id']) || '').trim();
+}
+
+function productTitle(product: any): string {
+    return String(firstValue(product, ['title', 'name', 'productName', 'product_name']) || '').trim();
+}
+
+export function matchingCatalogProduct(product: any, candidates: any[]): any | null {
+    const expectedExternalId = productExternalId(product);
+    const expectedId = productId(product);
+    const expectedSlug = productSlug(product);
+    const expectedTitle = productTitle(product).toLocaleLowerCase('uk-UA');
+    return candidates.find(candidate => {
+        const candidateExternalId = productExternalId(candidate);
+        if (expectedExternalId !== null && candidateExternalId !== null) {
+            return candidateExternalId === expectedExternalId;
+        }
+        const candidateId = productId(candidate);
+        if (expectedId && candidateId) return candidateId === expectedId;
+        const candidateSlug = productSlug(candidate);
+        if (expectedSlug && candidateSlug) return candidateSlug === expectedSlug;
+        return Boolean(expectedTitle && productTitle(candidate).toLocaleLowerCase('uk-UA') === expectedTitle);
+    }) || null;
 }
 
 function looksLikeProduct(value: any): boolean {
@@ -111,6 +143,31 @@ async function getProductDetails(
     return details;
 }
 
+async function resolveCatalogProduct(
+    token: string,
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    product: any
+): Promise<any> {
+    if (productSlug(product)) return product;
+    const externalId = productExternalId(product);
+    const title = productTitle(product);
+    const queries = [...new Set([externalId === null ? '' : String(externalId), title].filter(Boolean))];
+    if (!queries.length) return product;
+
+    const start = new Date();
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+    const response = await callMCPTool(token, 'silpo_find_products_batch', {
+        branchId: context.branchId,
+        deliveryType: context.deliveryType,
+        timeslotStart: start.toISOString(),
+        timeslotEnd: end.toISOString(),
+        products: queries,
+        limit: 10,
+    });
+    const match = matchingCatalogProduct(product, productsFromSearchResponse(response));
+    return match ? { ...product, ...match } : product;
+}
+
 export async function enrichProductsWithDetails(
     token: string,
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
@@ -123,18 +180,29 @@ export async function enrichProductsWithDetails(
             const index = cursor++;
             const original = products[index];
             try {
-                const details = await getProductDetails(token, context, original);
-                if (details) {
+                // Favorites can omit slug/displayRatio even though the catalogue
+                // has them. Resolve the exact article first, then request details.
+                const resolved = await resolveCatalogProduct(token, context, original);
+                let details: any | null = null;
+                try {
+                    details = await getProductDetails(token, context, resolved);
+                } catch (error) {
+                    // The catalogue match already restores displayRatio/stock,
+                    // so a failing optional details call must not discard it.
+                    console.warn(`[MCP] Full product details unavailable for ${productSlug(resolved) || productExternalId(resolved) || 'unknown product'}:`, error);
+                }
+                if (resolved !== original || details) {
                     enriched[index] = {
                         ...original,
+                        ...resolved,
                         ...details,
-                        // Product details can contain generic online-delivery flags.
-                        // Availability must stay tied to the store-scoped favorites response.
+                        // Preserve the summary only as a fallback. Explicit
+                        // negative stock/details take priority in productAvailability.
                         storeAvailability: productAvailability(original),
                     };
                 }
             } catch (error) {
-                console.warn(`[MCP] Product details unavailable for ${productSlug(original) || 'unknown product'}:`, error);
+                console.warn(`[MCP] Product catalogue resolution unavailable for ${productSlug(original) || productExternalId(original) || 'unknown product'}:`, error);
             }
         }
     };

@@ -111,22 +111,19 @@ export function productAvailability(product: any): boolean | null {
 
     if (nestedFieldValues(product, ['out_of_stock', 'outOfStock', 'is_out_of_stock', 'isOutOfStock']).some(truthy)) return false;
 
-    // Keep the availability captured from the store-scoped favorites call,
-    // but only after negative evidence from the richer details response.
-    if (Object.prototype.hasOwnProperty.call(product || {}, 'storeAvailability')) {
-        const value = product.storeAvailability;
-        if (value === null) return null;
-        return truthy(value);
-    }
+    let positiveDetailSignal = false;
     for (const stockValue of nestedFieldValues(product, ['stock'])) {
         if (stockValue !== null && stockValue !== '') {
             if (typeof stockValue === 'string') {
                 const normalized = stockValue.trim().toLowerCase();
                 if (['out_of_stock', 'out-of-stock', 'unavailable', 'sold_out', 'sold-out', 'none', 'false'].includes(normalized)) return false;
-                if (['in_stock', 'in-stock', 'available', 'true'].includes(normalized)) return true;
+                if (['in_stock', 'in-stock', 'available', 'true'].includes(normalized)) positiveDetailSignal = true;
             }
             const numeric = Number(stockValue);
-            if (Number.isFinite(numeric)) return numeric > 0;
+            if (Number.isFinite(numeric)) {
+                if (numeric <= 0) return false;
+                positiveDetailSignal = true;
+            }
         }
     }
     for (const quantity of nestedFieldValues(product, [
@@ -134,18 +131,31 @@ export function productAvailability(product: any): boolean | null {
     ])) {
         if (quantity !== null && quantity !== '') {
             const numeric = Number(quantity);
-            if (Number.isFinite(numeric)) return numeric > 0;
+            if (Number.isFinite(numeric)) {
+                if (numeric <= 0) return false;
+                positiveDetailSignal = true;
+            }
         }
     }
     for (const value of nestedFieldValues(product, [
         'in_stock', 'inStock', 'is_in_stock', 'isInStock'
     ])) {
-        return truthy(value);
+        if (!truthy(value)) return false;
+        positiveDetailSignal = true;
     }
     for (const value of nestedFieldValues(product, ['available', 'isAvailable', 'is_available'])) {
         if (!truthy(value)) return false;
+        positiveDetailSignal = true;
     }
-    return null;
+
+    // A favorites/search summary is useful when details have no stock signal,
+    // but it must never turn an explicit stock: 0 back into "available".
+    if (Object.prototype.hasOwnProperty.call(product || {}, 'storeAvailability')) {
+        const value = product.storeAvailability;
+        if (value === null) return null;
+        return truthy(value);
+    }
+    return positiveDetailSignal ? true : null;
 }
 
 export function allProductsUnexpectedlyUnavailable(products: any[]): boolean {

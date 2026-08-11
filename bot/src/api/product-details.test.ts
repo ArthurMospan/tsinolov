@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { productDetailsFromResponse } from './product-details';
+import { matchingCatalogProduct, productDetailsFromResponse } from './product-details';
 import { productAvailabilityReason } from './monitoring-favorites';
 import { productDisplayMeasurement } from './product-presentation';
 
@@ -35,4 +35,25 @@ test('selects the product whose slug matches the requested details page', () => 
     }), 'target-product');
 
     assert.equal(product?.slug, 'target-product');
+});
+
+test('resolves a favorite without slug by its external article number', () => {
+    const product = matchingCatalogProduct({
+        id: 'favorite-row',
+        externalProductId: 993140,
+        title: 'Картопля рання Українська',
+    }, [
+        { id: 'other', externalProductId: 123, slug: 'other', displayRatio: '1шт' },
+        {
+            id: 'catalog-row',
+            externalProductId: 993140,
+            slug: 'kartoplia-rannia-ukrainska-993140',
+            displayRatio: '100г',
+            stock: 0,
+        },
+    ]);
+
+    assert.equal(product?.slug, 'kartoplia-rannia-ukrainska-993140');
+    assert.equal(product?.displayRatio, '100г');
+    assert.equal(product?.stock, 0);
 });

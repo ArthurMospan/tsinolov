@@ -295,8 +295,14 @@ async function fetchFavorites(
     }));
 }
 
-async function fetchAccountFavorites(token: string, visibilityArgs: Record<string, boolean>): Promise<any[]> {
+async function fetchAccountFavorites(
+    token: string,
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    visibilityArgs: Record<string, boolean>,
+): Promise<any[]> {
     return favoritesFromResponse(await callMCPTool(token, 'silpo_get_my_favorites', {
+        branchId: context.branchId,
+        deliveryType: context.deliveryType,
         limit: 500,
         offset: 0,
         ...visibilityArgs,
@@ -309,7 +315,7 @@ export async function getMonitoringFavorites(
     now = new Date()
 ): Promise<MonitoringFavoritesResult> {
     const visibilityArgs = await favoriteVisibilityArgs(token);
-    const accountFavoritesPromise = fetchAccountFavorites(token, visibilityArgs).catch(error => {
+    const accountFavoritesPromise = fetchAccountFavorites(token, context, visibilityArgs).catch(error => {
         console.warn('[MCP] Account-wide favorites unavailable; using the store catalogue projection:', error);
         return [];
     });

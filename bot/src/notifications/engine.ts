@@ -295,15 +295,15 @@ async function savePersonalPromoState(tgId: number, promos: any[]): Promise<void
 }
 
 export async function runUserCheck(tgId: number, sendMessage: SendMessage): Promise<CheckResult> {
-    const user = await db.prepare('SELECT mcp_token FROM users WHERE tg_id = ?').get(tgId) as any;
-    if (!user?.mcp_token) return { checked: false, notifications: 0, products: 0, error: 'Silpo account is not connected' };
-
-    const settings = await db.prepare('SELECT * FROM user_settings WHERE tg_id = ?').get(tgId) as any || {};
-    const targets = await db.prepare(
-        'SELECT product_id, target_price FROM user_favorites WHERE tg_id = ? AND target_price > 0'
-    ).all(tgId) as any[];
-
     try {
+        const user = await db.prepare('SELECT mcp_token FROM users WHERE tg_id = ?').get(tgId) as any;
+        if (!user?.mcp_token) return { checked: false, notifications: 0, products: 0, error: 'Silpo account is not connected' };
+
+        const settings = await db.prepare('SELECT * FROM user_settings WHERE tg_id = ?').get(tgId) as any || {};
+        const targets = await db.prepare(
+            'SELECT product_id, target_price FROM user_favorites WHERE tg_id = ? AND target_price > 0'
+        ).all(tgId) as any[];
+
         const notificationsEnabled = boolValue(settings.onboarding_completed);
         const context = await getUserStoreContext(tgId, user.mcp_token);
         const monitoring = await getMonitoringFavorites(user.mcp_token, context);

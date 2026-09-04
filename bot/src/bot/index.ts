@@ -9,6 +9,12 @@ import { runChecker, startChecker } from './checker';
 
 dotenv.config();
 
+// Node terminates on an unhandled rejection or exception, and on Render that
+// means a cold restart costing a minute of downtime. A transient Turso or MCP
+// outage is logged instead so the API and the bot keep serving.
+process.on('unhandledRejection', reason => console.error('[Process] Unhandled promise rejection:', reason));
+process.on('uncaughtException', error => console.error('[Process] Uncaught exception:', error));
+
 const token = process.env.BOT_TOKEN?.trim().replace(/^("|')(.*)\1$/, '$2').trim();
 if (!token) {
     console.error('❌ BOT_TOKEN is required');

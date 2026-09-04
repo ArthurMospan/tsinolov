@@ -3,6 +3,7 @@ import db from '../db/index';
 import { runUserCheck } from '../notifications/engine';
 import { automaticNotificationsAllowed } from '../notifications/notification-schedule';
 import { sendTelegramMessage } from '../api/telegram';
+import { createGuardedRunner } from './guarded-runner';
 
 export async function runChecker(bot: Telegraf, onlyTgId?: number): Promise<string> {
     const users = await db.prepare(
@@ -28,13 +29,13 @@ export async function runChecker(bot: Telegraf, onlyTgId?: number): Promise<stri
 }
 
 export function startChecker(bot: Telegraf) {
-    let running = false;
-    const run = async () => {
-        if (running || !automaticNotificationsAllowed()) return;
-        running = true;
-        try { await runChecker(bot); }
-        finally { running = false; }
-    };
+    const run = createGuardedRunner(
+        async () => {
+            if (!automaticNotificationsAllowed()) return;
+            await runChecker(bot);
+        },
+        error => console.error('[Checker] Price check cycle failed:', error)
+    );
     setTimeout(() => void run(), 5000);
     // Five minutes is responsive enough for price tracking and avoids hammering Silpo MCP.
     setInterval(() => void run(), 5 * 60 * 1000);

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import dotenv from 'dotenv';
 import path from 'path';
 import { createClient, type Client, type InArgs, type ResultSet } from '@libsql/client';
+import { createLazyBootstrap } from './lazy-bootstrap';
 
 dotenv.config();
 
@@ -166,13 +167,17 @@ async function bootstrap(): Promise<void> {
     }
 }
 
-export const dbReady = bootstrap();
+const ensureReady = createLazyBootstrap(bootstrap);
+
+// Warm the schema up at startup so the first request is not slowed down, while
+// keeping a failed attempt from crashing the process: the next query retries it.
+void ensureReady().catch(() => undefined);
 
 const db = {
     prepare(sql: string) {
         return {
             async get(...args: unknown[]) {
-                await dbReady;
+                await ensureReady();
                 if (turso) {
                     const result = await executeRemote(sql, args);
                     return result.rows[0] || undefined;
@@ -180,7 +185,7 @@ const db = {
                 return local!.prepare(sql).get(...args);
             },
             async all(...args: unknown[]) {
-                await dbReady;
+                await ensureReady();
                 if (turso) {
                     const result = await executeRemote(sql, args);
                     return result.rows;
@@ -188,7 +193,7 @@ const db = {
                 return local!.prepare(sql).all(...args);
             },
             async run(...args: unknown[]) {
-                await dbReady;
+                await ensureReady();
                 if (turso) {
                     const result = await executeRemote(sql, args);
                     return { changes: Number(result.rowsAffected || 0), lastInsertRowid: result.lastInsertRowid };
@@ -198,7 +203,7 @@ const db = {
         };
     },
     async exec(sql: string) {
-        await dbReady;
+        await ensureReady();
         if (turso) {
             const statements = sql.split(/;\s*(?=\n|$)/).map(statement => statement.trim()).filter(Boolean);
             for (const statement of statements) await turso.execute(statement);
@@ -207,7 +212,7 @@ const db = {
         local!.exec(sql);
     },
     async pragma(sql: string) {
-        await dbReady;
+        await ensureReady();
         if (local) local.pragma(sql);
     }
 };

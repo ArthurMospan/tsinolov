@@ -22,7 +22,7 @@ import { getMonitoringFavorites, productAvailability, productAvailabilityReason 
 import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
 import { getCatalogCategories, getCatalogProducts } from '../api/product-catalog';
 import { enrichProductsWithDetails } from '../api/product-details';
-import { productPresentation } from '../api/product-presentation';
+import { productDisplayPricing, productPresentation } from '../api/product-presentation';
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
@@ -509,6 +509,7 @@ app.get('/api/catalog/products', async (req, res) => {
             products: products.map(product => ({
                 ...product,
                 ...productPresentation(product),
+                ...productDisplayPricing(product),
                 in_stock: productAvailability(product),
                 availability_reason: productAvailabilityReason(product),
                 isFavorite: isFavoriteProduct(product, favoritesResult.products),
@@ -550,6 +551,7 @@ app.get('/api/products/search', async (req, res) => {
             products: products.map(product => ({
                 ...product,
                 ...productPresentation(product),
+                ...productDisplayPricing(product),
                 in_stock: productAvailability(product),
                 availability_reason: productAvailabilityReason(product),
                 isFavorite: isFavoriteProduct(product, favorites),

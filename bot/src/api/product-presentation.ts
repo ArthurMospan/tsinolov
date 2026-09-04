@@ -3,6 +3,11 @@ type ProductPresentation = {
     price_unit?: string;
 };
 
+type ProductDisplayPricing = {
+    price?: number;
+    oldPrice?: number;
+};
+
 function scalarText(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
     if (!value || typeof value !== 'object') return '';
@@ -120,6 +125,23 @@ export function productDisplayMeasurement(product: any): string | undefined {
     return Number.isFinite(amount) && amount > 0
         ? `${Number(amount.toFixed(3)).toLocaleString('uk-UA')} ${unit}`
         : `1 ${unit}`;
+}
+
+function positiveNumber(value: unknown): number | undefined {
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount > 0 ? amount : undefined;
+}
+
+// Goods sold by weight are priced per kilogram but shown to customers for a
+// smaller quantity, so displayPrice is the figure that belongs next to
+// displayRatio. A missing or unusable value leaves the original price in place.
+export function productDisplayPricing(product: any): ProductDisplayPricing {
+    const price = positiveNumber(product?.displayPrice ?? product?.display_price);
+    const oldPrice = positiveNumber(product?.displayOldPrice ?? product?.display_old_price);
+    return {
+        ...(price !== undefined ? { price } : {}),
+        ...(oldPrice !== undefined ? { oldPrice } : {}),
+    };
 }
 
 export function productPresentation(product: any): ProductPresentation {

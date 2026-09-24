@@ -1,4 +1,5 @@
 import db from '../db/index';
+import { alertOwner } from './owner-alerts';
 
 // A private log for the owner: who started the bot, who connected Silpo, and
 // where guests got stuck. It never holds anything from the Silpo account.
@@ -45,7 +46,10 @@ export async function recordActivity(tgId: number | null, event: ActivityEvent, 
         await db.prepare('INSERT INTO user_events (tg_id, event, detail) VALUES (?, ?, ?)').run(tgId, event, detail);
     } catch (error) {
         console.error(`[Activity] Failed to record ${event}:`, error);
+        return;
     }
+    await alertOwner(tgId, event, detail).catch(error =>
+        console.error(`[Activity] Failed to alert the owner about ${event}:`, error));
 }
 
 export async function activitySnapshot(eventLimit = 100): Promise<ActivitySnapshot> {

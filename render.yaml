@@ -21,3 +21,7 @@ services:
         sync: false
       - key: ADMIN_STATS_KEY
         sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TG_ID
+        sync: false

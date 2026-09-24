@@ -28,7 +28,7 @@ const EVENT_LABELS: Record<ActivityRecord['event'], string> = {
     opened_without_identity: '⚠️ Відкрито без даних Telegram',
 };
 
-const DETAIL_LABELS: Record<string, string> = {
+export const DETAIL_LABELS: Record<string, string> = {
     cancelled: 'скасовано на сторінці Сільпо',
     expired: 'не завершено або почато двічі',
     failed: 'Сільпо не видав доступ',

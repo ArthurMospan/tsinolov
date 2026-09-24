@@ -77,6 +77,20 @@ function openAppHint(): string {
   return telegramWithheldIdentity() ? MENU_BUTTON_HINT : 'Відкрийте застосунок через Telegram';
 }
 
+let unsignedOpenReported = false;
+
+// Lets the owner's log count launches Telegram did not sign; nothing about the guest is sent.
+function reportUnsignedOpen(): void {
+  if (unsignedOpenReported) return;
+  unsignedOpenReported = true;
+  const platform = String((window as any).Telegram?.WebApp?.platform || 'unknown');
+  void fetch(`${API_URL}/events/unsigned-open`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform }),
+  }).catch(() => undefined);
+}
+
 function telegramContext(): { id: number; initData: string } {
   return { id: getTgId(), initData: telegramInitData() };
 }
@@ -839,6 +853,7 @@ function App() {
       if (cancelled) return;
 
       const context = telegramContext();
+      if (!context.id && telegramWithheldIdentity() && !RETURNING_FROM_SILPO_LOGIN) reportUnsignedOpen();
       setTgId(context.id);
       if (context.id === tgId) void loadData();
     };

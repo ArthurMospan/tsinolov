@@ -8,6 +8,7 @@ import { getUserStoreContext } from '../api/user-store-context';
 import { startServer } from '../server/index';
 import { runChecker, startChecker } from './checker';
 import { openAppKeyboard } from './app-button';
+import { recordActivity } from '../admin/activity';
 
 dotenv.config();
 
@@ -64,7 +65,9 @@ const mainMenu = openAppKeyboard(webAppUrl);
 
 bot.start(async (ctx) => {
     const tgId = ctx.from.id;
+    const known = await db.prepare('SELECT 1 FROM users WHERE tg_id = ?').get(tgId);
     await getOrCreateUser(tgId);
+    void recordActivity(tgId, 'start', known ? 'again' : 'new');
     
     await ctx.setChatMenuButton({
         type: 'web_app',
@@ -148,6 +151,7 @@ bot.action(/^cart:([a-f0-9]{16})$/, async (ctx) => {
         if (isMcpAuthError(error)) {
             await forgetSilpoToken(tgId, silpoToken).catch(forgetError =>
                 console.error('[Telegram] Failed to forget the rejected Silpo token:', forgetError));
+            void recordActivity(tgId, 'session_ended', 'cart_button');
         }
         await ctx.reply(cartActionFailureText(error));
     }

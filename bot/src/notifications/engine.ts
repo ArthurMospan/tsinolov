@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import db from '../db/index';
 import { callMCPTool, isMcpAuthError } from '../api/mcp-direct';
 import { forgetSilpoToken, RECONNECT_HINT } from '../api/silpo-session';
+import { recordActivity } from '../admin/activity';
 import { sameStoreContext, type StoreContext } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites, nextDaytimeReference, productAvailability } from '../api/monitoring-favorites';
@@ -298,6 +299,7 @@ async function savePersonalPromoState(tgId: number, promos: any[]): Promise<void
 // Without a word the guest would simply stop getting alerts and never learn why.
 async function pauseForEndedSession(tgId: number, token: string, sendMessage: SendMessage): Promise<CheckResult> {
     console.warn(`[Notifications] Silpo ended the session of user ${tgId}; checks pause until they reconnect`);
+    await recordActivity(tgId, 'session_ended', 'price_check');
     try {
         await forgetSilpoToken(tgId, token);
         await sendMessage(tgId, `⚠️ ${bold('Сільпо завершив вхід у Цінолов')}\n\nСповіщення про ціни на паузі. ${RECONNECT_HINT}`);

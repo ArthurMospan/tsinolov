@@ -23,10 +23,12 @@ import { isFavoriteProduct, searchSilpoProducts } from '../api/product-search';
 import { getCatalogCategories, getCatalogProducts } from '../api/product-catalog';
 import { enrichProductsWithDetails } from '../api/product-details';
 import { productDisplayPricing, productPresentation } from '../api/product-presentation';
-import { sendTelegramMessage } from '../api/telegram';
+import { sendTelegramMessage, telegramDisplayName } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
-import { rememberPendingAuth, takePendingAuth } from '../auth/oauth-state';
+import { rememberPendingAuth, takePendingAuth, type PendingAuth } from '../auth/oauth-state';
+import { activitySnapshot, recordActivity } from '../admin/activity';
+import { adminKeyMatches, renderStatsPage } from '../admin/stats-page';
 import { forgetSilpoToken } from '../api/silpo-session';
 
 const app = express();
@@ -55,6 +57,7 @@ async function answerEndedSession(res: express.Response, tgId: number, token: st
     console.warn('[MCP] Silpo rejected the stored token, asking the user to reconnect:', err);
     if (userTokens.get(tgId) === token) userTokens.delete(tgId);
     await forgetSilpoToken(tgId, token);
+    void recordActivity(tgId, 'session_ended', 'app');
     res.status(401).json({ authenticated: false, reauth: true });
     return true;
 }
@@ -312,6 +315,7 @@ app.get('/auth/start', async (req, res) => {
 
         res.redirect(authUrl.toString());
     } catch (err) {
+        void recordActivity(tgId, 'connect_failed', 'start_failed');
         console.error('[OAuth] Registration failed:', err);
         res.redirect(silpoAuthResult('failed'));
     }
@@ -321,16 +325,19 @@ app.get('/auth/start', async (req, res) => {
 app.get('/auth/callback', async (req, res) => {
     const code = String(req.query.code || '');
     const state = String(req.query.state || '');
-
-    if (req.query.error) {
-        console.warn('[OAuth] Silpo returned an authorization error:', req.query.error);
-        return res.redirect(silpoAuthResult(req.query.error === 'access_denied' ? 'cancelled' : 'failed'));
-    }
+    let pending: PendingAuth | null = null;
 
     try {
-        const pending = state ? await takePendingAuth(state) : null;
+        pending = state ? await takePendingAuth(state) : null;
+        if (req.query.error) {
+            console.warn('[OAuth] Silpo returned an authorization error:', req.query.error);
+            const result = req.query.error === 'access_denied' ? 'cancelled' : 'failed';
+            void recordActivity(pending?.tgId ?? null, 'connect_failed', result);
+            return res.redirect(silpoAuthResult(result));
+        }
         if (!code || !pending) {
             console.warn('[OAuth] Callback does not match a pending login');
+            void recordActivity(null, 'connect_failed', 'expired');
             return res.redirect(silpoAuthResult('expired'));
         }
 
@@ -362,11 +369,41 @@ app.get('/auth/callback', async (req, res) => {
         `).run(pending.tgId, tokenData.access_token);
 
         // Seamless redirect back to the Telegram Web App UI
+        void recordActivity(pending.tgId, 'connected');
         res.redirect(silpoAuthResult('connected'));
     } catch (err) {
         console.error('[OAuth] Token exchange failed:', err);
+        void recordActivity(pending?.tgId ?? null, 'connect_failed', 'failed');
         res.redirect(silpoAuthResult('failed'));
     }
+});
+
+// ── Owner statistics ────────────────────────────────────────────────
+// A private page behind a long secret key from ADMIN_STATS_KEY. A wrong or
+// missing key falls through to the Mini App, as if the page did not exist.
+app.get('/admin/stats', async (req, res, next) => {
+    if (!adminKeyMatches(String(req.query.key || ''), process.env.ADMIN_STATS_KEY)) return next();
+    try {
+        const snapshot = await activitySnapshot();
+        const ids = [...new Set([
+            ...snapshot.users.map(user => user.tgId),
+            ...snapshot.events.flatMap(event => event.tgId === null ? [] : [event.tgId]),
+        ])];
+        const names = new Map(await Promise.all(ids.map(async id => [id, await telegramDisplayName(id)] as const)));
+        res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer' });
+        res.type('html').send(renderStatsPage(snapshot, new Map([...names].filter(([, name]) => name))));
+    } catch (error) {
+        console.error('[Admin] Stats page failed:', error);
+        res.status(500).type('text').send('Статистика тимчасово недоступна');
+    }
+});
+
+// The Mini App reports a launch Telegram did not sign. Nothing identifies the
+// guest, so the log learns only that it happened and on which platform.
+app.post('/events/unsigned-open', async (req, res) => {
+    const platform = String(req.body?.platform || '').replace(/[^a-z]/gi, '').slice(0, 16) || 'unknown';
+    await recordActivity(null, 'opened_without_identity', platform);
+    res.status(204).end();
 });
 
 // ── MCP Tool Call Helper ────────────────────────────────────────────
@@ -411,6 +448,7 @@ app.get('/api/user/profile', async (req, res) => {
         res.json({ authenticated: true, name, avatar, ...store, checkedAt: new Date().toISOString() });
     } catch (err) {
         if (await answerEndedSession(res, tgId, token, err)) return;
+        void recordActivity(tgId, 'load_failed', 'profile');
         console.error('[MCP] Store context fetch failed:', err);
         res.status(502).json({ error: 'Silpo store context is temporarily unavailable' });
     }
@@ -484,6 +522,7 @@ app.get('/api/favorites', async (req, res) => {
         });
     } catch (err) {
         if (await answerEndedSession(res, tgId, token, err)) return;
+        void recordActivity(tgId, 'load_failed', 'favorites');
         console.error('[MCP] Favorites fetch failed:', err);
         res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });
     }

@@ -94,6 +94,13 @@ const schemaStatements = [
         PRIMARY KEY (tg_id, promo_id),
         FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
     )`,
+    `CREATE TABLE IF NOT EXISTS user_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tg_id INTEGER,
+        event TEXT NOT NULL,
+        detail TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
     `CREATE TABLE IF NOT EXISTS oauth_states (
         state TEXT PRIMARY KEY,
         tg_id INTEGER NOT NULL,

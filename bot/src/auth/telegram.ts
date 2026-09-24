@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { recordActivity } from '../admin/activity';
 
 const SESSION_COOKIE = 'tg_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -123,6 +124,7 @@ export function requireTelegramWebApp(req: Request, res: Response, next: NextFun
             hasUser,
             hasBotToken: Boolean(telegramBotToken()),
         });
+        void recordActivity(expectedTgId, 'identity_rejected');
         return res.status(401).json({ error: 'Invalid Telegram WebApp identity' });
     }
 }

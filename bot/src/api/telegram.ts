@@ -1,8 +1,11 @@
-async function callTelegram(method: 'sendMessage' | 'sendPhoto', payload: Record<string, unknown>): Promise<void> {
+function botToken(): string {
     const token = process.env.BOT_TOKEN?.trim().replace(/^("|')(.*)\1$/, '$2').trim();
     if (!token) throw new Error('BOT_TOKEN is missing');
+    return token;
+}
 
-    const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+async function callTelegram(method: 'sendMessage' | 'sendPhoto', payload: Record<string, unknown>): Promise<void> {
+    const response = await fetch(`https://api.telegram.org/bot${botToken()}/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -52,4 +55,21 @@ export async function sendTelegramMessage(
         link_preview_options: { is_disabled: true },
         reply_markup: replyMarkup,
     });
+}
+
+/** "First Last (@username)" as Telegram shows the chat to the bot, or '' when unknown. */
+export async function telegramDisplayName(chatId: number): Promise<string> {
+    try {
+        const response = await fetch(`https://api.telegram.org/bot${botToken()}/getChat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId }),
+        });
+        const data = await response.json();
+        if (!data?.ok) return '';
+        const name = [data.result.first_name, data.result.last_name].filter(Boolean).join(' ');
+        return data.result.username ? `${name} (@${data.result.username})` : name;
+    } catch {
+        return '';
+    }
 }

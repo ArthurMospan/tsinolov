@@ -41,7 +41,7 @@ const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 // Read once at startup: the app strips the parameter as soon as it mounts.
 const RETURNING_FROM_SILPO_LOGIN = new URLSearchParams(window.location.search).has('silpo_auth');
 
-const MENU_BUTTON_HINT = 'Відкрийте Цінолов кнопкою «🏷️ Цінолов» ліворуч від поля вводу';
+const MENU_BUTTON_HINT = 'Відкрийте Цінолов кнопкою «📱 Цінолов» ліворуч від поля вводу';
 
 function getTgId(): number {
   try {
@@ -1483,8 +1483,8 @@ function App() {
   const activeCatalogCategory = catalogPath[catalogPath.length - 1];
   const visibleCatalogCategories = activeCatalogCategory?.children || catalogCategories;
   const launchHint = telegramWithheldIdentity()
-    ? { title: 'Відкрийте кнопкою «🏷️ Цінолов»', detail: 'Вона ліворуч від поля вводу в чаті з ботом' }
-    : { title: 'Відкрийте через Telegram', detail: 'У чаті з ботом натисніть «🏷️ Цінолов»' };
+    ? { title: 'Відкрийте кнопкою «📱 Цінолов»', detail: 'Вона ліворуч від поля вводу в чаті з ботом' }
+    : { title: 'Відкрийте через Telegram', detail: 'У чаті з ботом натисніть «📱 Цінолов»' };
 
   if (isLoading) {
     return (

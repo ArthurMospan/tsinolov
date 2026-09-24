@@ -68,7 +68,7 @@ bot.start(async (ctx) => {
     
     await ctx.setChatMenuButton({
         type: 'web_app',
-        text: '🏷️ Цінолов',
+        text: '📱 Цінолов',
         web_app: { url: webAppUrl }
     });
 
@@ -85,7 +85,7 @@ bot.start(async (ctx) => {
     );
     // Guests who started the bot earlier still have the old reply-keyboard
     // button, which opens the app without their Telegram identity.
-    await ctx.reply('Кнопка «🏷️ Цінолов» ліворуч від поля вводу теж відкриває застосунок.', Markup.removeKeyboard());
+    await ctx.reply('Кнопка «📱 Цінолов» ліворуч від поля вводу теж відкриває застосунок.', Markup.removeKeyboard());
 });
 
 bot.command('test_notification', async (ctx) => {
@@ -180,7 +180,7 @@ async function startTelegramPolling(): Promise<void> {
         bot.telegram.setChatMenuButton({
             menuButton: {
                 type: 'web_app',
-                text: '🏷️ Цінолов',
+                text: '📱 Цінолов',
                 web_app: { url: webAppUrl }
             }
         }).catch(console.error);

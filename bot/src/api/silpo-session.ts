@@ -1,6 +1,6 @@
 import db from '../db/index';
 
-export const RECONNECT_HINT = 'Відкрийте «🏷️ Цінолов» і підключіть акаунт Сільпо ще раз.';
+export const RECONNECT_HINT = 'Відкрийте «📱 Цінолов» і підключіть акаунт Сільпо ще раз.';
 
 // Silpo refuses a token only once the session behind it has ended, so the token
 // is dropped and every surface asks the guest to reconnect. It is matched by

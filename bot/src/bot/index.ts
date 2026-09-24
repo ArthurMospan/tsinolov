@@ -7,6 +7,7 @@ import { getStoreContext, parseMcpContent } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { startServer } from '../server/index';
 import { runChecker, startChecker } from './checker';
+import { openAppKeyboard } from './app-button';
 
 dotenv.config();
 
@@ -59,9 +60,7 @@ const getOrCreateUser = async (tgId: number) => {
     return user;
 };
 
-const mainMenu = Markup.keyboard([
-    [Markup.button.webApp('📱 Відкрити застосунок', webAppUrl)]
-]).resize();
+const mainMenu = openAppKeyboard(webAppUrl);
 
 bot.start(async (ctx) => {
     const tgId = ctx.from.id;
@@ -73,7 +72,7 @@ bot.start(async (ctx) => {
         web_app: { url: webAppUrl }
     });
 
-    ctx.reply(
+    await ctx.reply(
         'Вітаємо у *Цінолов від Сільпо*! 🍊\n\n' +
         'Допоможу зловити *найкращі ціни* на твої улюблені товари. Встановлюй *бажану вартість*, ' +
         'а я повідомлю, щойно товар подешевшає до цієї суми! Крім того, ділитимуся з тобою ' +
@@ -84,6 +83,9 @@ bot.start(async (ctx) => {
             ...mainMenu
         }
     );
+    // Guests who started the bot earlier still have the old reply-keyboard
+    // button, which opens the app without their Telegram identity.
+    await ctx.reply('Кнопка «📱 Цінолов» ліворуч від поля вводу теж відкриває застосунок.', Markup.removeKeyboard());
 });
 
 bot.command('test_notification', async (ctx) => {

@@ -37,6 +37,12 @@ const SILPO_BASKET_APP_LINK = `${SILPO_APP_LINK}?deep_link_value=basket`;
 const TG_ID_STORAGE_KEY = 'tsinolov_tg_id';
 const ACTIVE_STORE_STORAGE_KEY = 'tsinolov_active_store';
 
+// The Silpo login leaves the Mini App and comes back with ?silpo_auth=<result>.
+// Read once at startup: the app strips the parameter as soon as it mounts.
+const RETURNING_FROM_SILPO_LOGIN = new URLSearchParams(window.location.search).has('silpo_auth');
+
+const MENU_BUTTON_HINT = 'Відкрийте Цінолов кнопкою «📱 Цінолов» ліворуч від поля вводу';
+
 function getTgId(): number {
   try {
     const telegram = (window as any).Telegram?.WebApp;
@@ -45,6 +51,9 @@ function getTgId(): number {
       window.localStorage.setItem(TG_ID_STORAGE_KEY, String(telegramId));
       return telegramId;
     }
+    // A stored id may belong to another Telegram account on this device, so
+    // inside Telegram it is trusted only on the way back from the Silpo login.
+    if (telegramWithheldIdentity() && !RETURNING_FROM_SILPO_LOGIN) return 0;
     return Number(window.localStorage.getItem(TG_ID_STORAGE_KEY) || import.meta.env.VITE_TEST_TG_ID || 0);
   } catch {
     return Number(import.meta.env.VITE_TEST_TG_ID || 0);
@@ -53,6 +62,19 @@ function getTgId(): number {
 
 function telegramInitData(): string {
   return String((window as any).Telegram?.WebApp?.initData || '');
+}
+
+// Telegram opened the app but withheld who the guest is. It does so for a Mini
+// App launched from a reply-keyboard button.
+function telegramWithheldIdentity(): boolean {
+  const telegramWindow = window as any;
+  const platform = String(telegramWindow.Telegram?.WebApp?.platform || 'unknown');
+  const insideTelegram = Boolean(telegramWindow.TelegramWebviewProxy) || platform !== 'unknown';
+  return insideTelegram && !telegramInitData();
+}
+
+function openAppHint(): string {
+  return telegramWithheldIdentity() ? MENU_BUTTON_HINT : 'Відкрийте застосунок через Telegram';
 }
 
 function telegramContext(): { id: number; initData: string } {
@@ -878,13 +900,9 @@ function App() {
   }, [productSearchOpen, productSearch, tgId]);
 
   const connectSilpo = () => {
-    if (!tgId) {
-      showToast('Відкрийте застосунок через Telegram');
-      return;
-    }
     const initData = telegramInitData();
-    if (!initData) {
-      showToast('Telegram не передав підпис. Закрийте й відкрийте Mini App знову');
+    if (!tgId || !initData) {
+      showToast(openAppHint());
       return;
     }
     window.localStorage.setItem(TG_ID_STORAGE_KEY, String(tgId));
@@ -1464,6 +1482,9 @@ function App() {
 
   const activeCatalogCategory = catalogPath[catalogPath.length - 1];
   const visibleCatalogCategories = activeCatalogCategory?.children || catalogCategories;
+  const launchHint = telegramWithheldIdentity()
+    ? { title: 'Відкрийте кнопкою «📱 Цінолов»', detail: 'Вона ліворуч від поля вводу в чаті з ботом' }
+    : { title: 'Відкрийте через Telegram', detail: 'У чаті з ботом натисніть «📱 Цінолов»' };
 
   if (isLoading) {
     return (
@@ -1557,7 +1578,7 @@ function App() {
         <main className="connect-screen">
           <button className="connect-card" onClick={connectSilpo}>
             <span className="connect-icon"><Link2 size={22} /></span>
-            <span className="connect-copy"><strong>{tgId ? 'Підключити акаунт Сільпо' : 'Відкрийте через Telegram'}</strong><small>{tgId ? 'Щоб бачити улюблені товари та актуальні ціни' : 'Ідентифікатор Telegram не знайдено'}</small></span>
+            <span className="connect-copy"><strong>{tgId ? 'Підключити акаунт Сільпо' : launchHint.title}</strong><small>{tgId ? 'Щоб бачити улюблені товари та актуальні ціни' : launchHint.detail}</small></span>
           </button>
         </main>
       )}

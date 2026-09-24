@@ -1,0 +1,13 @@
+.git
+.env*
+**/node_modules
+**/dist
+**/build
+**/*.sqlite
+**/*.sqlite-journal
+**/*.db
+**/*.db-journal
+**/*.exe
+data
+tunnel
+*.log

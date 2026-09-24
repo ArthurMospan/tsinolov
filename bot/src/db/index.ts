@@ -94,6 +94,14 @@ const schemaStatements = [
         PRIMARY KEY (tg_id, promo_id),
         FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
     )`,
+    `CREATE TABLE IF NOT EXISTS oauth_states (
+        state TEXT PRIMARY KEY,
+        tg_id INTEGER NOT NULL,
+        client_id TEXT NOT NULL,
+        code_verifier TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS telegram_cart_actions (
         action_id TEXT PRIMARY KEY,
         tg_id INTEGER NOT NULL,

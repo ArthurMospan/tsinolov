@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import db from '../db/index';
-import { callMCPTool } from '../api/mcp-direct';
+import { callMCPTool, isMcpAuthError } from '../api/mcp-direct';
+import { forgetSilpoToken, RECONNECT_HINT } from '../api/silpo-session';
 import { sameStoreContext, type StoreContext } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { getMonitoringFavorites, nextDaytimeReference, productAvailability } from '../api/monitoring-favorites';
@@ -294,10 +295,24 @@ async function savePersonalPromoState(tgId: number, promos: any[]): Promise<void
     }
 }
 
+// Without a word the guest would simply stop getting alerts and never learn why.
+async function pauseForEndedSession(tgId: number, token: string, sendMessage: SendMessage): Promise<CheckResult> {
+    console.warn(`[Notifications] Silpo ended the session of user ${tgId}; checks pause until they reconnect`);
+    try {
+        await forgetSilpoToken(tgId, token);
+        await sendMessage(tgId, `⚠️ ${bold('Сільпо завершив вхід у Цінолов')}\n\nСповіщення про ціни на паузі. ${RECONNECT_HINT}`);
+    } catch (error) {
+        console.error(`[Notifications] Failed to pause checks for user ${tgId}:`, error);
+    }
+    return { checked: false, notifications: 0, products: 0, error: 'Silpo session ended' };
+}
+
 export async function runUserCheck(tgId: number, sendMessage: SendMessage): Promise<CheckResult> {
+    let token = '';
     try {
         const user = await db.prepare('SELECT mcp_token FROM users WHERE tg_id = ?').get(tgId) as any;
         if (!user?.mcp_token) return { checked: false, notifications: 0, products: 0, error: 'Silpo account is not connected' };
+        token = String(user.mcp_token);
 
         const settings = await db.prepare('SELECT * FROM user_settings WHERE tg_id = ?').get(tgId) as any || {};
         const targets = await db.prepare(
@@ -505,6 +520,7 @@ export async function runUserCheck(tgId: number, sendMessage: SendMessage): Prom
 
         return { checked: true, notifications, products: liveFavorites.length };
     } catch (error: any) {
+        if (isMcpAuthError(error)) return pauseForEndedSession(tgId, token, sendMessage);
         console.error(`[Notifications] User ${tgId} check failed:`, error);
         return { checked: false, notifications: 0, products: 0, error: error?.message || 'Check failed' };
     }

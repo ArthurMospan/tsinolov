@@ -65,11 +65,16 @@ function telegramUser(): { name: string; avatar: string } {
   return { name, avatar: String(user?.photo_url || '') };
 }
 
-function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+const SILPO_SESSION_ENDED_EVENT = 'tsinolov:silpo-session-ended';
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   const initData = telegramInitData();
   if (initData) headers.set('X-Telegram-Init-Data', initData);
-  return fetch(input, { ...init, headers, credentials: init.credentials || 'same-origin' });
+  const response = await fetch(input, { ...init, headers, credentials: init.credentials || 'same-origin' });
+  // Any call can be the first to learn that Silpo ended the session.
+  if (await silpoSessionExpired(response)) window.dispatchEvent(new Event(SILPO_SESSION_ENDED_EVENT));
+  return response;
 }
 
 // The server answers 401 with `reauth` once Silpo stops accepting the saved token.
@@ -77,6 +82,28 @@ async function silpoSessionExpired(response: Response): Promise<boolean> {
   if (response.status !== 401) return false;
   const body = await response.clone().json().catch(() => null);
   return body?.reauth === true;
+}
+
+const SILPO_AUTH_NOTICES = new Map([
+  ['connected', 'Акаунт Сільпо підключено'],
+  ['cancelled', 'Вхід у Сільпо скасовано'],
+  ['expired', 'Вхід у Сільпо не завершився. Спробуйте ще раз'],
+  ['failed', 'Не вдалося підключити Сільпо. Спробуйте ще раз'],
+]);
+
+// The Silpo login comes back to the Mini App with ?silpo_auth=<result>.
+function silpoAuthNotice(): string | null {
+  const result = new URLSearchParams(window.location.search).get('silpo_auth') || '';
+  // Some clients finish the login in an outside browser, far from Telegram.
+  if (result === 'connected' && !getTgId()) return 'Акаунт Сільпо підключено. Поверніться в Telegram';
+  return SILPO_AUTH_NOTICES.get(result) || null;
+}
+
+function forgetSilpoAuthResult(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('silpo_auth')) return;
+  url.searchParams.delete('silpo_auth');
+  window.history.replaceState(window.history.state, '', url);
 }
 
 type SettingKey =
@@ -579,6 +606,29 @@ function App() {
     window.setTimeout(() => setToast(null), 2600);
   }, []);
 
+  const [silpoAuthResult, setSilpoAuthResult] = useState(silpoAuthNotice);
+  useEffect(forgetSilpoAuthResult, []);
+  // Shown once the app has loaded: the loading screen has no room for a toast.
+  useEffect(() => {
+    if (!silpoAuthResult || isLoading) return;
+    showToast(silpoAuthResult);
+    setSilpoAuthResult(null);
+  }, [isLoading, showToast, silpoAuthResult]);
+
+  useEffect(() => {
+    const returnToConnectScreen = () => {
+      setIsAuthenticated(false);
+      setUserProfile(null);
+      setFavorites([]);
+      setProfileMenuOpen(false);
+      setStorePickerOpen(false);
+      setProductSearchOpen(false);
+      showToast('Сесія Сільпо завершилася. Підключіть акаунт ще раз');
+    };
+    window.addEventListener(SILPO_SESSION_ENDED_EVENT, returnToConnectScreen);
+    return () => window.removeEventListener(SILPO_SESSION_ENDED_EVENT, returnToConnectScreen);
+  }, [showToast]);
+
   const loadData = useCallback(async (showLoader = true) => {
     if (!tgId) {
       setIsAuthenticated(false);
@@ -682,9 +732,9 @@ function App() {
         setUserProfile(null);
       }
       const message = error instanceof Error ? error.message : '';
-      if (message === 'Silpo session expired') {
-        showToast('Сесія Сільпо завершилася. Підключіть акаунт ще раз');
-      } else if (message === 'Telegram context missing') {
+      // apiFetch has already sent the guest to the connect screen with an explanation.
+      if (message === 'Silpo session expired') return;
+      if (message === 'Telegram context missing') {
         showToast('Відкрийте застосунок через Telegram');
       } else if (message === 'Telegram identity rejected') {
         showToast('Telegram-підпис відхилено. Перезапустіть застосунок через бота');

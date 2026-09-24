@@ -26,6 +26,8 @@ import { productDisplayPricing, productPresentation } from '../api/product-prese
 import { sendTelegramMessage } from '../api/telegram';
 import { runUserCheck } from '../notifications/engine';
 import { clearTelegramSession, requireTelegramWebApp } from '../auth/telegram';
+import { rememberPendingAuth, takePendingAuth } from '../auth/oauth-state';
+import { forgetSilpoToken } from '../api/silpo-session';
 
 const app = express();
 app.use(cors());
@@ -33,14 +35,6 @@ app.use(express.json());
 app.get('/health', (_req, res) => res.json({ status: 'ok', checkedAt: new Date().toISOString() }));
 app.use('/api', requireTelegramWebApp);
 app.use('/auth/start', requireTelegramWebApp);
-
-// ── OAuth 2.1 PKCE State ────────────────────────────────────────────
-let oauthState: {
-    client_id: string;
-    code_verifier: string;
-    state: string;
-    tg_id: number;
-} | null = null;
 
 // Store tokens per tg_id
 const userTokens: Map<number, string> = new Map();
@@ -54,11 +48,15 @@ async function tokenForUser(tgId: number): Promise<string | null> {
     return token || null;
 }
 
-// Drop a token Silpo no longer accepts so the Mini App offers to reconnect
-// instead of failing on every load.
-async function forgetRejectedToken(tgId: number) {
-    userTokens.delete(tgId);
-    await db.prepare('UPDATE users SET mcp_token = NULL WHERE tg_id = ?').run(tgId);
+// Silpo refuses a token only once the session behind it has ended: forget it and
+// send the Mini App back to the connect screen instead of failing on every call.
+async function answerEndedSession(res: express.Response, tgId: number, token: string, err: unknown): Promise<boolean> {
+    if (!isMcpAuthError(err)) return false;
+    console.warn('[MCP] Silpo rejected the stored token, asking the user to reconnect:', err);
+    if (userTokens.get(tgId) === token) userTokens.delete(tgId);
+    await forgetSilpoToken(tgId, token);
+    res.status(401).json({ authenticated: false, reauth: true });
+    return true;
 }
 
 function firstMcpRoot(response: any): any {
@@ -261,6 +259,12 @@ function generateCodeChallenge(verifier: string): string {
     return crypto.createHash('sha256').update(verifier).digest('base64url');
 }
 
+// The login is a full-page trip to Silpo and back. Every outcome lands on the
+// Mini App with a result it can explain, never on a bare error page.
+function silpoAuthResult(result: 'connected' | 'cancelled' | 'expired' | 'failed'): string {
+    return `/?silpo_auth=${result}`;
+}
+
 // ── Step 1: Register client & start OAuth ───────────────────────────
 app.get('/auth/start', async (req, res) => {
     const tgId = Number(req.query.tg_id);
@@ -281,13 +285,21 @@ app.get('/auth/start', async (req, res) => {
                 token_endpoint_auth_method: 'none',
             }),
         });
-        const regData = await regResp.json();
+        const regData = await regResp.json().catch(() => ({}));
+        if (!regResp.ok || !regData?.client_id) {
+            throw new Error(`Dynamic client registration failed (HTTP ${regResp.status}): ${JSON.stringify(regData).slice(0, 300)}`);
+        }
         // Generate PKCE
         const code_verifier = generateCodeVerifier();
         const code_challenge = generateCodeChallenge(code_verifier);
         const state = crypto.randomBytes(16).toString('hex');
 
-        oauthState = { client_id: regData.client_id, code_verifier, state, tg_id: tgId };
+        await rememberPendingAuth(state, {
+            tgId,
+            clientId: String(regData.client_id),
+            codeVerifier: code_verifier,
+            redirectUri: callbackUrl,
+        });
 
         // Build authorize URL
         const authUrl = new URL(`${MCP_BASE}/authorize`);
@@ -301,20 +313,26 @@ app.get('/auth/start', async (req, res) => {
         res.redirect(authUrl.toString());
     } catch (err) {
         console.error('[OAuth] Registration failed:', err);
-        res.status(500).json({ error: 'OAuth registration failed' });
+        res.redirect(silpoAuthResult('failed'));
     }
 });
 
 // ── Step 2: Handle OAuth Callback ───────────────────────────────────
 app.get('/auth/callback', async (req, res) => {
-    const { code, state } = req.query;
+    const code = String(req.query.code || '');
+    const state = String(req.query.state || '');
 
-    if (!oauthState || state !== oauthState.state) {
-        return res.status(400).send('Invalid state parameter');
+    if (req.query.error) {
+        console.warn('[OAuth] Silpo returned an authorization error:', req.query.error);
+        return res.redirect(silpoAuthResult(req.query.error === 'access_denied' ? 'cancelled' : 'failed'));
     }
 
     try {
-        const callbackUrl = `${getBaseUrl(req)}/auth/callback`;
+        const pending = state ? await takePendingAuth(state) : null;
+        if (!code || !pending) {
+            console.warn('[OAuth] Callback does not match a pending login');
+            return res.redirect(silpoAuthResult('expired'));
+        }
 
         // Exchange authorization code for token
         const tokenResp = await fetch(`${MCP_BASE}/token`, {
@@ -322,31 +340,32 @@ app.get('/auth/callback', async (req, res) => {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
                 grant_type: 'authorization_code',
-                client_id: oauthState.client_id,
-                code: code as string,
-                redirect_uri: callbackUrl,
-                code_verifier: oauthState.code_verifier,
+                client_id: pending.clientId,
+                code,
+                redirect_uri: pending.redirectUri,
+                code_verifier: pending.codeVerifier,
             }).toString(),
         });
 
-        const tokenData = await tokenResp.json();
+        const tokenData = await tokenResp.json().catch(() => ({}));
+        if (!tokenResp.ok || !tokenData?.access_token) {
+            throw new Error(`Token exchange failed (HTTP ${tokenResp.status}): ${JSON.stringify(tokenData).slice(0, 300)}`);
+        }
         // Store token
-        userTokens.set(oauthState.tg_id, tokenData.access_token);
+        userTokens.set(pending.tgId, tokenData.access_token);
 
         // Store in DB
         await db.prepare(`
             INSERT INTO users (tg_id, mcp_token)
             VALUES (?, ?)
             ON CONFLICT(tg_id) DO UPDATE SET mcp_token = excluded.mcp_token
-        `).run(oauthState.tg_id, tokenData.access_token);
-
-        oauthState = null;
+        `).run(pending.tgId, tokenData.access_token);
 
         // Seamless redirect back to the Telegram Web App UI
-        res.redirect('/');
+        res.redirect(silpoAuthResult('connected'));
     } catch (err) {
         console.error('[OAuth] Token exchange failed:', err);
-        res.status(500).send('Token exchange failed');
+        res.redirect(silpoAuthResult('failed'));
     }
 });
 
@@ -391,11 +410,7 @@ app.get('/api/user/profile', async (req, res) => {
         const store = await getResolvedUserStoreContext(tgId, token);
         res.json({ authenticated: true, name, avatar, ...store, checkedAt: new Date().toISOString() });
     } catch (err) {
-        if (isMcpAuthError(err)) {
-            console.warn('[MCP] Silpo rejected the stored token, asking the user to reconnect:', err);
-            await forgetRejectedToken(tgId);
-            return res.status(401).json({ authenticated: false, reauth: true });
-        }
+        if (await answerEndedSession(res, tgId, token, err)) return;
         console.error('[MCP] Store context fetch failed:', err);
         res.status(502).json({ error: 'Silpo store context is temporarily unavailable' });
     }
@@ -468,11 +483,7 @@ app.get('/api/favorites', async (req, res) => {
             store: context,
         });
     } catch (err) {
-        if (isMcpAuthError(err)) {
-            console.warn('[MCP] Silpo rejected the stored token, asking the user to reconnect:', err);
-            await forgetRejectedToken(tgId);
-            return res.status(401).json({ authenticated: false, reauth: true, favorites: [] });
-        }
+        if (await answerEndedSession(res, tgId, token, err)) return;
         console.error('[MCP] Favorites fetch failed:', err);
         res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });
     }
@@ -488,6 +499,7 @@ app.get('/api/catalog/categories', async (req, res) => {
         const categories = await getCatalogCategories(token, context);
         res.json({ categories, store: context });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Catalog] Categories failed:', error);
         res.status(502).json({ error: 'Category catalog failed' });
     }
@@ -534,6 +546,7 @@ app.get('/api/catalog/products', async (req, res) => {
             store: context,
         });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Catalog] Products failed:', error);
         res.status(502).json({ error: 'Category products failed' });
     }
@@ -581,6 +594,7 @@ app.get('/api/products/search', async (req, res) => {
             nextOffset: 'nextOffset' in search ? search.nextOffset : search.products.length,
         });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Products] Search failed:', error);
         res.status(502).json({ error: 'Product search failed' });
     }
@@ -615,6 +629,7 @@ app.post('/api/favorites/add', async (req, res) => {
         });
         res.json({ success: true, alreadyFavorite: false, synced: true });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Favorites] Failed to add favorite:', error);
         res.status(502).json({ error: 'Failed to add to Silpo Favorites' });
     }
@@ -686,6 +701,7 @@ app.get('/api/stores/options', async (req, res) => {
 
         res.json({ current, accountDefault, recent, addresses });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Fulfillment] Failed to load options:', error);
         res.status(502).json({ error: 'Failed to load fulfillment options' });
     }
@@ -715,6 +731,7 @@ app.get('/api/stores/search', async (req, res) => {
             .slice(0, 20);
         res.json({ stores });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Stores] Search failed:', error);
         res.status(502).json({ error: 'Store search failed' });
     }
@@ -735,6 +752,7 @@ app.get('/api/stores/nearby', async (req, res) => {
             .slice(0, 20);
         res.json({ stores });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Stores] Nearby lookup failed:', error);
         res.status(502).json({ error: 'Nearby store lookup failed' });
     }
@@ -749,6 +767,7 @@ app.get('/api/addresses/search', async (req, res) => {
     try {
         res.json({ addresses: await geocodeAddresses(query) });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Addresses] Search failed:', error);
         res.status(502).json({ error: 'Address search failed' });
     }
@@ -800,6 +819,7 @@ app.post('/api/stores/select', async (req, res) => {
         `).run(context.branchId, context.deliveryType, context.contextLabel, tgId);
         res.json({ success: true, store: context });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Fulfillment] Selection failed:', error);
         res.status(502).json({ error: 'Fulfillment selection failed' });
     }
@@ -917,6 +937,7 @@ app.post('/api/cart/add', async (req, res) => {
         });
         res.json({ success: true });
     } catch (error) {
+        if (await answerEndedSession(res, Number(tg_id), token, error)) return;
         console.error('[Cart] Failed to add product:', error);
         res.status(502).json({ error: 'Failed to add product to cart' });
     }
@@ -950,6 +971,7 @@ app.post('/api/cart/add-batch', async (req, res) => {
         });
         res.json({ success: true, added: normalized.length });
     } catch (error) {
+        if (await answerEndedSession(res, tgId, token, error)) return;
         console.error('[Cart] Failed to add deal basket:', error);
         res.status(502).json({ error: 'Failed to add deal basket' });
     }
@@ -984,6 +1006,7 @@ app.post('/api/favorites/remove', async (req, res) => {
         await db.prepare('DELETE FROM user_favorites WHERE tg_id = ? AND product_id = ?').run(tg_id, product_id);
         res.json({ success: true });
     } catch (e) {
+        if (await answerEndedSession(res, Number(tg_id), token, e)) return;
         console.error('Failed to remove favorite:', e);
         res.status(500).json({ error: 'Failed to remove from favorites' });
     }

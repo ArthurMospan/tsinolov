@@ -1,7 +1,8 @@
 import { Telegraf, Markup } from 'telegraf';
 import dotenv from 'dotenv';
 import db from '../db/index';
-import { callMCPTool } from '../api/mcp-direct';
+import { callMCPTool, isMcpAuthError } from '../api/mcp-direct';
+import { forgetSilpoToken, RECONNECT_HINT } from '../api/silpo-session';
 import { getStoreContext, parseMcpContent } from '../api/store-context';
 import { getUserStoreContext } from '../api/user-store-context';
 import { startServer } from '../server/index';
@@ -111,9 +112,11 @@ bot.action(/^cart:([a-f0-9]{16})$/, async (ctx) => {
     }
 
     await ctx.answerCbQuery('Додаю в кошик…');
+    let silpoToken = '';
     try {
         const user = await db.prepare('SELECT mcp_token FROM users WHERE tg_id = ?').get(tgId) as any;
         if (!user?.mcp_token) throw new Error('Silpo account is not connected');
+        silpoToken = String(user.mcp_token);
         const context = await getUserStoreContext(tgId, String(user.mcp_token));
         const cartContext = await getStoreContext(String(user.mcp_token));
         if (context.branchId !== cartContext.branchId
@@ -140,11 +143,23 @@ bot.action(/^cart:([a-f0-9]{16})$/, async (ctx) => {
         }).catch(() => undefined);
     } catch (error) {
         console.error('[Telegram] Failed to add notification product to cart:', error);
-        await ctx.reply(error instanceof Error && error.message === 'CONTEXT_MISMATCH'
-            ? 'У Сільпо зараз вибрана інша адреса або магазин. Змініть спосіб отримання в Сільпо й спробуйте ще раз.'
-            : 'Не вдалося додати товар у кошик. Спробуйте ще раз трохи пізніше.');
+        if (isMcpAuthError(error)) {
+            await forgetSilpoToken(tgId, silpoToken).catch(forgetError =>
+                console.error('[Telegram] Failed to forget the rejected Silpo token:', forgetError));
+        }
+        await ctx.reply(cartActionFailureText(error));
     }
 });
+
+function cartActionFailureText(error: unknown): string {
+    if (error instanceof Error && error.message === 'CONTEXT_MISMATCH') {
+        return 'У Сільпо зараз вибрана інша адреса або магазин. Змініть спосіб отримання в Сільпо й спробуйте ще раз.';
+    }
+    if (isMcpAuthError(error) || (error instanceof Error && error.message === 'Silpo account is not connected')) {
+        return `Цінолов більше не має доступу до вашого акаунта Сільпо. ${RECONNECT_HINT}`;
+    }
+    return 'Не вдалося додати товар у кошик. Спробуйте ще раз трохи пізніше.';
+}
 
 bot.action('cart_done', async ctx => {
     await ctx.answerCbQuery('Товар уже додано в корзину');

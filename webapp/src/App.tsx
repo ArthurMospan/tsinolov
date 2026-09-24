@@ -72,6 +72,13 @@ function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Res
   return fetch(input, { ...init, headers, credentials: init.credentials || 'same-origin' });
 }
 
+// The server answers 401 with `reauth` once Silpo stops accepting the saved token.
+async function silpoSessionExpired(response: Response): Promise<boolean> {
+  if (response.status !== 401) return false;
+  const body = await response.clone().json().catch(() => null);
+  return body?.reauth === true;
+}
+
 type SettingKey =
   | 'price_drop'
   | 'price_target'
@@ -601,6 +608,10 @@ function App() {
         apiFetch(`${API_URL}/api/user/profile?tg_id=${tgId}`),
         apiFetch(`${API_URL}/api/settings?tg_id=${tgId}`),
       ]);
+      if (await silpoSessionExpired(profileResponse)) {
+        authenticatedSession = false;
+        throw new Error('Silpo session expired');
+      }
       if (!profileResponse.ok || !settingsResponse.ok) throw new Error('User data unavailable');
 
       const profile = await profileResponse.json();
@@ -643,6 +654,10 @@ function App() {
       window.localStorage.setItem(storeStorageKey, currentContextKey);
 
       const favoritesResponse = await apiFetch(`${API_URL}/api/favorites?tg_id=${tgId}`);
+      if (await silpoSessionExpired(favoritesResponse)) {
+        authenticatedSession = false;
+        throw new Error('Silpo session expired');
+      }
       if (!favoritesResponse.ok) throw new Error('Favorites unavailable');
       const favoritesData = await favoritesResponse.json();
       const availabilityReliable = booleanValue(favoritesData.availabilityReliable, true);
@@ -662,9 +677,14 @@ function App() {
     } catch (error) {
       console.error('[Mini App] Failed to load data:', error);
       setIsAuthenticated(authenticatedSession);
-      if (!authenticatedSession) setFavorites([]);
+      if (!authenticatedSession) {
+        setFavorites([]);
+        setUserProfile(null);
+      }
       const message = error instanceof Error ? error.message : '';
-      if (message === 'Telegram context missing') {
+      if (message === 'Silpo session expired') {
+        showToast('Сесія Сільпо завершилася. Підключіть акаунт ще раз');
+      } else if (message === 'Telegram context missing') {
         showToast('Відкрийте застосунок через Telegram');
       } else if (message === 'Telegram identity rejected') {
         showToast('Telegram-підпис відхилено. Перезапустіть застосунок через бота');

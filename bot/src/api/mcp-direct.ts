@@ -1,5 +1,12 @@
 export const MCP_BASE = 'https://mcp.silpo.ua';
 
+// Silpo rejected the user's token: the session is over and only a new login helps.
+export class McpAuthError extends Error {}
+
+export function isMcpAuthError(error: unknown): boolean {
+    return error instanceof McpAuthError;
+}
+
 async function callMCP(token: string, method: string, params?: Record<string, any>) {
     const resp = await fetch(`${MCP_BASE}/mcp`, {
         method: 'POST',
@@ -16,6 +23,7 @@ async function callMCP(token: string, method: string, params?: Record<string, an
     });
 
     const data = await resp.json();
+    if (resp.status === 401) throw new McpAuthError(`MCP HTTP 401: ${JSON.stringify(data).slice(0, 500)}`);
     if (!resp.ok) throw new Error(`MCP HTTP ${resp.status}: ${JSON.stringify(data).slice(0, 500)}`);
     if (data?.error) throw new Error(`MCP error: ${JSON.stringify(data.error).slice(0, 500)}`);
     if (data?.result?.isError) throw new Error(`MCP tool error: ${JSON.stringify(data.result.content).slice(0, 500)}`);

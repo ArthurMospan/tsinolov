@@ -3,7 +3,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import path from 'path';
 import db from '../db/index';
-import { MCP_BASE, callMCPTool } from '../api/mcp-direct';
+import { MCP_BASE, callMCPTool, isMcpAuthError } from '../api/mcp-direct';
 import { profileIdentityFromMcp } from '../api/mcp-profile';
 import {
     fulfillmentMode,
@@ -52,6 +52,13 @@ async function tokenForUser(tgId: number): Promise<string | null> {
     const token = user?.mcp_token ? String(user.mcp_token) : '';
     if (token) userTokens.set(tgId, token);
     return token || null;
+}
+
+// Drop a token Silpo no longer accepts so the Mini App offers to reconnect
+// instead of failing on every load.
+async function forgetRejectedToken(tgId: number) {
+    userTokens.delete(tgId);
+    await db.prepare('UPDATE users SET mcp_token = NULL WHERE tg_id = ?').run(tgId);
 }
 
 function firstMcpRoot(response: any): any {
@@ -384,6 +391,11 @@ app.get('/api/user/profile', async (req, res) => {
         const store = await getResolvedUserStoreContext(tgId, token);
         res.json({ authenticated: true, name, avatar, ...store, checkedAt: new Date().toISOString() });
     } catch (err) {
+        if (isMcpAuthError(err)) {
+            console.warn('[MCP] Silpo rejected the stored token, asking the user to reconnect:', err);
+            await forgetRejectedToken(tgId);
+            return res.status(401).json({ authenticated: false, reauth: true });
+        }
         console.error('[MCP] Store context fetch failed:', err);
         res.status(502).json({ error: 'Silpo store context is temporarily unavailable' });
     }
@@ -456,6 +468,11 @@ app.get('/api/favorites', async (req, res) => {
             store: context,
         });
     } catch (err) {
+        if (isMcpAuthError(err)) {
+            console.warn('[MCP] Silpo rejected the stored token, asking the user to reconnect:', err);
+            await forgetRejectedToken(tgId);
+            return res.status(401).json({ authenticated: false, reauth: true, favorites: [] });
+        }
         console.error('[MCP] Favorites fetch failed:', err);
         res.status(502).json({ authenticated: true, favorites: [], error: 'MCP call failed' });
     }
